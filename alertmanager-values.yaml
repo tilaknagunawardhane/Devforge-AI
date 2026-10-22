@@ -1,0 +1,21 @@
+alertmanager:
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      group_by: ['alertname', 'job']
+      group_wait: 5s
+      group_interval: 1m
+      repeat_interval: 5m
+      # Route all alerts to our custom webhook receiver
+      receiver: 'devforge-ai-webhook'
+      routes:
+        - receiver: 'devforge-ai-webhook'
+          matchers:
+            - alertname =~ ".*"
+    receivers:
+      - name: 'devforge-ai-webhook'
+        webhook_configs:
+          # host.minikube.internal allows the cluster to talk to your Windows localhost
+          - url: 'http://host.minikube.internal:9090/alert'
+            send_resolved: true
