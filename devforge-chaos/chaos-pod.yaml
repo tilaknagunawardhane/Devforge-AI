@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: chaos-engine
+spec:
+  serviceAccountName: chaos-sa
+  containers:
+  - name: chaos
+    image: devforge-chaos:latest
+    imagePullPolicy: Never
+  restartPolicy: Never

@@ -1,0 +1,23 @@
+# billing-service.yaml
+api:
+  billing-service:
+    image: golang:alpine
+    command: go run main.go
+    environment:
+      - PGUSER=user
+      - PGPASSWORD=password
+      - PGHOST=localhost
+      - PGPORT=5432
+      - PGDATABASE=billingdb
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+  postgres:
+    image: postgres
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=billingdb
+    ports:
+      - "5432:5432"
