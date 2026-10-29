@@ -1,0 +1,11 @@
+groups:
+  - name: chaos
+    rules:
+      - alert: PodKilled
+        # fires for 2 minutes after each kill (a new counter series has no prior sample, so increase() would miss it)
+        expr: (time() - chaos_pod_last_kill_timestamp_seconds) < 120
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pod {{ $labels.pod }} was terminated"

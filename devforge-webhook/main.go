@@ -25,6 +25,13 @@ type OllamaResponse struct {
 	Response string `json:"response"`
 }
 
+func getenv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 func sendToSlack(report string) {
 	slackURL := os.Getenv("SLACK_WEBHOOK_URL")
 	if slackURL == "" {
@@ -57,13 +64,13 @@ You must calculate the out-of-service time breakdowns. Explicitly identify exact
 Keep the formatting professional, use Slack-friendly markdown (bolding with *asterisks*), and use emojis. Keep it under 150 words.`, podName, logs)
 
 	reqBody := OllamaRequest{
-		Model:  "llama3",
+		Model:  getenv("OLLAMA_MODEL", "llama3"),
 		Prompt: prompt,
 		Stream: false,
 	}
 
 	jsonData, _ := json.Marshal(reqBody)
-	resp, err := http.Post("http://host.docker.internal:11434/api/generate", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(getenv("OLLAMA_URL", "http://host.docker.internal:11434")+"/api/generate", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		fmt.Println("❌ Failed to contact Ollama:", err)
 		return
@@ -94,7 +101,14 @@ func alertHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	port := getenv("PORT", "9090")
 	http.HandleFunc("/alert", alertHandler)
-	fmt.Println("🎧 DevForge AI Webhook listening on port 9090...")
-	http.ListenAndServe(":9090", nil)
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	fmt.Printf("🎧 DevForge AI Webhook listening on port %s...\n", port)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		fmt.Println("❌ Server error:", err)
+		os.Exit(1)
+	}
 }
