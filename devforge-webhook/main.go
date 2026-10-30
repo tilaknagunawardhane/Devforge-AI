@@ -1,12 +1,13 @@
 package main
 
 import (
-	"bytes"
+	"context"
+	"crypto/subtle"
 	"encoding/json"
-	"fmt"
-	"io"
+	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 )
 
 type AlertPayload struct {
@@ -15,100 +16,57 @@ type AlertPayload struct {
 	} `json:"alerts"`
 }
 
-type OllamaRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
-	Stream bool   `json:"stream"`
-}
-
-type OllamaResponse struct {
-	Response string `json:"response"`
-}
-
-func getenv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func sendToSlack(report string) {
-	slackURL := os.Getenv("SLACK_WEBHOOK_URL")
-	if slackURL == "" {
-		fmt.Println("⚠️ SLACK_WEBHOOK_URL not set, skipping Slack notification.")
-		return
-	}
-
-	payload := map[string]string{"text": report}
-	jsonData, _ := json.Marshal(payload)
-	http.Post(slackURL, "application/json", bytes.NewBuffer(jsonData))
-}
-
-func generateRCA(podName string) {
-	fmt.Println("🧠 Forwarding logs to Llama 3 for Root Cause Analysis...")
-
-	// Simulated logs retrieved from our "log aggregator" showing the exact moment of failure
-	logs := `[10:04:12] INFO: System execution algorithm started.
-[10:04:15] WARN: External API latency detected (3000ms).
-[10:04:20] ERROR: Timeout mechanism triggered but failed to gracefully close connections.
-[10:04:28] FATAL: Process hung due to unhandled timeout state. Out of service.
-[10:04:45] SYSTEM: Pod violently terminated by chaos-engine.`
-
-	// The AI prompt specifically targets the out-of-service breakdown metrics
-	prompt := fmt.Sprintf(`You are a Senior Site Reliability Engineer AI.
-The pod %s just crashed. Here is the final log trace:
-%s
-
-Generate a Root Cause Analysis (RCA) report for a Slack channel.
-You must calculate the out-of-service time breakdowns. Explicitly identify exactly how much downtime (in seconds) was caused by the timeout mechanism failing to handle the hung state versus the time the pod sat dead before the chaos script termination hit it.
-Keep the formatting professional, use Slack-friendly markdown (bolding with *asterisks*), and use emojis. Keep it under 150 words.`, podName, logs)
-
-	reqBody := OllamaRequest{
-		Model:  getenv("OLLAMA_MODEL", "llama3"),
-		Prompt: prompt,
-		Stream: false,
-	}
-
-	jsonData, _ := json.Marshal(reqBody)
-	resp, err := http.Post(getenv("OLLAMA_URL", "http://host.docker.internal:11434")+"/api/generate", "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		fmt.Println("❌ Failed to contact Ollama:", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	var ollamaResp OllamaResponse
-	json.Unmarshal(bodyBytes, &ollamaResp)
-
-	fmt.Println("✅ RCA Generated! Pushing to Slack...")
-	sendToSlack(ollamaResp.Response)
-}
-
-func alertHandler(w http.ResponseWriter, r *http.Request) {
-	var payload AlertPayload
-	json.NewDecoder(r.Body).Decode(&payload)
-
-	for _, alert := range payload.Alerts {
-		podName := alert.Labels["pod"]
-		if podName != "" {
-			fmt.Printf("\n🚨 ALERT RECEIVED for pod: %s\n", podName)
-			// Run the AI analysis in a separate goroutine so we immediately reply 200 OK to Prometheus
-			go generateRCA(podName)
+// requireToken rejects requests without the shared secret. An empty token disables auth.
+func requireToken(token string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if token != "" {
+			got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
 		}
+		next(w, r)
 	}
-	w.WriteHeader(http.StatusOK)
+}
+
+func alertHandler(cfg Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var payload AlertPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		for _, alert := range payload.Alerts {
+			pod := alert.Labels["pod"]
+			if pod == "" {
+				continue
+			}
+			ns := alert.Labels["namespace"]
+			if ns == "" {
+				ns = "default"
+			}
+			slog.Info("alert received", "pod", pod, "namespace", ns, "alertname", alert.Labels["alertname"])
+			// Analyze in the background so Alertmanager gets its 200 immediately.
+			go analyze(context.Background(), cfg, pod, ns)
+		}
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func newMux(cfg Config) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/alert", requireToken(cfg.Token, alertHandler(cfg)))
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	return mux
 }
 
 func main() {
-	port := getenv("PORT", "9090")
-	http.HandleFunc("/alert", alertHandler)
-	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	fmt.Printf("🎧 DevForge AI Webhook listening on port %s...\n", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		fmt.Println("❌ Server error:", err)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	cfg := loadConfig()
+	slog.Info("DevForge AI webhook starting", "port", cfg.Port, "model", cfg.OllamaModel, "auth", cfg.Token != "", "prometheus", cfg.PrometheusURL != "")
+	if err := http.ListenAndServe(":"+cfg.Port, newMux(cfg)); err != nil {
+		slog.Error("server error", "error", err.Error())
 		os.Exit(1)
 	}
 }

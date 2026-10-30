@@ -1,9 +1,10 @@
 # Stage 1: build a static binary
 FROM golang:1.22 AS builder
 WORKDIR /app
-COPY go.mod ./
-COPY main.go ./
-RUN CGO_ENABLED=0 GOOS=linux go build -o webhook main.go
+COPY go.mod go.sum ./
+RUN go mod download
+COPY *.go ./
+RUN CGO_ENABLED=0 GOOS=linux go build -o webhook .
 
 # Stage 2: tiny runtime image, non-root
 FROM alpine:3.20

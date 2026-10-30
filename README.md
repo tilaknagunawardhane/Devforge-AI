@@ -86,13 +86,13 @@ All tools listed are **free and open source**. Tick items off as they are comple
 
 ## Phase 2 — Real data in the RCA (biggest quality win)
 
-- [ ] Webhook fetches real pod logs (`--previous`), events, and `describe` info via the Kubernetes API (`client-go`) instead of simulated logs
-- [ ] Webhook queries Prometheus for CPU, memory, and restart count at time of failure
-- [ ] Improve the prompt with structured sections: Summary, Likely cause, Evidence, Suggested fix
-- [ ] Timeouts, retries, and a fallback message when Ollama is unavailable
-- [ ] Authentication on `/alert` (shared secret / token header)
-- [ ] Structured JSON logging and a `/healthz` endpoint
-- [ ] Unit tests for payload parsing and prompt building
+- [x] Webhook fetches real pod logs (`--previous`), events, and `describe` info via the Kubernetes API (`client-go`) instead of simulated logs
+- [ ] Webhook queries Prometheus for CPU, memory, and restart count at time of failure (partial: restart counts of sibling pods and chaos-kill stats are included; CPU/memory need cAdvisor or kube-state-metrics)
+- [x] Improve the prompt with structured sections: Summary, Likely cause, Evidence, Suggested fix
+- [x] Timeouts, retries, and a fallback message when Ollama is unavailable
+- [x] Authentication on `/alert` (shared secret / token header)
+- [x] Structured JSON logging and a `/healthz` endpoint
+- [x] Unit tests for payload parsing and prompt building (run: `docker run --rm -v "${PWD}/devforge-webhook:/app" -w /app golang:1.22 go test ./...`)
 
 ## Phase 3 — Observability built into every generated service
 
