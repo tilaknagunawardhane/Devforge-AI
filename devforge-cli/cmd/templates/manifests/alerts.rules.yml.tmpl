@@ -1,0 +1,30 @@
+groups:
+  - name: [[.Name]]
+    rules:
+      - alert: [[.AlertPrefix]]Down
+        expr: up{job="[[.Name]]"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: [[.Name]]
+        annotations:
+          summary: "[[.Name]] pod {{ $labels.pod }} is not being scraped / is down"
+      - alert: [[.AlertPrefix]]HighErrorRate
+        expr: |
+          sum by (pod) (rate(http_requests_total{job="[[.Name]]", status=~"5.."}[5m]))
+            / sum by (pod) (rate(http_requests_total{job="[[.Name]]"}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: [[.Name]]
+        annotations:
+          summary: "[[.Name]] pod {{ $labels.pod }}: more than 5% of requests are failing"
+      - alert: [[.AlertPrefix]]HighLatency
+        expr: |
+          histogram_quantile(0.95, sum by (pod, le) (rate(http_request_duration_seconds_bucket{job="[[.Name]]"}[5m]))) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          service: [[.Name]]
+        annotations:
+          summary: "[[.Name]] pod {{ $labels.pod }}: p95 latency above 500ms"

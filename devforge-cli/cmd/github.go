@@ -12,7 +12,7 @@ import (
 // createGitHubRepo calls the GitHub API to create a new public repository
 func createGitHubRepo(repoName string) error {
 	token := os.Getenv("GITHUB_TOKEN")
-	
+
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"name":    repoName,
 		"private": false, // Public so ArgoCD can read it easily

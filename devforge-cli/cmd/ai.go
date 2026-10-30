@@ -67,7 +67,7 @@ Use EXACTLY this structure:
 		// FIX 2: Print exactly what the AI outputted so we can see where it broke
 		fmt.Println("\n--- DEBUG: RAW AI OUTPUT ---")
 		fmt.Println(ollamaResp.Response)
-		fmt.Println("----------------------------\n")
+		fmt.Println("----------------------------")
 		return nil, fmt.Errorf("unexpected end of JSON input")
 	}
 

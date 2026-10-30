@@ -1,0 +1,16 @@
+# Requires the Prometheus Operator CRDs (kube-prometheus-stack). Plain Prometheus
+# can use the prometheus.io/* annotations on the pod template instead.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: [[.Name]]
+  labels:
+    app.kubernetes.io/name: [[.Name]]
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: [[.Name]]
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

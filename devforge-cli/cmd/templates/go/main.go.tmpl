@@ -1,0 +1,100 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+const serviceName = "[[.Name]]"
+
+// Prometheus metrics exposed on /metrics. Alerts and the Grafana dashboard generated
+// by DevForge are written against exactly these names.
+var (
+	requestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "http_requests_total",
+		Help: "Total HTTP requests by method, route and status code.",
+	}, []string{"method", "route", "status"})
+
+	requestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "http_request_duration_seconds",
+		Help:    "HTTP request latency by method and route.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"method", "route"})
+)
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+// instrument records request count and latency. The route label is the registered
+// pattern (not the raw URL) so metric cardinality stays bounded.
+func instrument(route string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next(rec, r)
+		requestDuration.WithLabelValues(r.Method, route).Observe(time.Since(start).Seconds())
+		requestsTotal.WithLabelValues(r.Method, route, strconv.Itoa(rec.status)).Inc()
+	}
+}
+
+func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	// Connection string for the [[.Database]] backend; wire your driver in here.
+	_ = os.Getenv("DATABASE_URL")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", instrument("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"service": serviceName, "status": "ok"})
+	}))
+	// Liveness: the process is up. Readiness: add dependency checks (database, etc.) here.
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.Handle("/metrics", promhttp.Handler())
+
+	srv := &http.Server{Addr: ":" + port, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+
+	go func() {
+		slog.Info("service starting", "service", serviceName, "port", port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("server error", "error", err.Error())
+			os.Exit(1)
+		}
+	}()
+
+	// Graceful shutdown so rolling updates and chaos kills drain in-flight requests.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	<-stop
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	srv.Shutdown(ctx)
+	slog.Info("service stopped")
+}
