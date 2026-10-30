@@ -2,10 +2,14 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
+	"time"
 )
 
 // Structs for the Ollama API Request/Response
@@ -13,63 +17,68 @@ type OllamaRequest struct {
 	Model  string `json:"model"`
 	Prompt string `json:"prompt"`
 	Stream bool   `json:"stream"`
-	Format string `json:"format"` // Forces the AI to return JSON
 }
 
 type OllamaResponse struct {
 	Response string `json:"response"`
 }
 
-// Struct for our expected AI output files
-type ProjectFiles struct {
-	MainCode   string `json:"main"`
-	Dockerfile string `json:"dockerfile"`
-	Yaml       string `json:"yaml"`
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
-// Function to generate code using the local Llama 3 model
-func generateCode(projectName, language, database string) (*ProjectFiles, error) {
-	// The prompt strictly commands the AI to return a specific JSON structure
-	prompt := fmt.Sprintf(`You are an expert DevOps engineer. Create a MINIMAL starter %s microservice named %s that connects to %s.
-Keep all code as short as possible (under 50 lines total).
-You must respond strictly with a JSON object. 
-The values MUST be flat text strings containing the raw code with properly escaped newlines (\n). Do NOT use nested JSON objects.
+// askOllama sends a prompt to a local Ollama server. No paid API or cloud service is involved.
+// Configure with OLLAMA_URL (default http://host.docker.internal:11434) and OLLAMA_MODEL (default llama3).
+func askOllama(ctx context.Context, prompt string) (string, error) {
+	url := envOr("OLLAMA_URL", "http://host.docker.internal:11434")
+	body, _ := json.Marshal(OllamaRequest{Model: envOr("OLLAMA_MODEL", "llama3"), Prompt: prompt})
 
-Use EXACTLY this structure:
-{
-  "main": "// minimal code here",
-  "dockerfile": "# minimal dockerfile here",
-  "yaml": "# minimal yaml here"
-}`, language, projectName, database)
-
-	reqBody := OllamaRequest{
-		Model:  "llama3",
-		Prompt: prompt,
-		Stream: false,
-		Format: "json",
-	}
-
-	jsonData, _ := json.Marshal(reqBody)
-	resp, err := http.Post("http://host.docker.internal:11434/api/generate", "application/json", bytes.NewBuffer(jsonData))
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url+"/api/generate", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to Ollama: %v", err)
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to connect to Ollama at %s: %w", url, err)
 	}
 	defer resp.Body.Close()
-
-	bodyBytes, _ := io.ReadAll(resp.Body)
-
-	var ollamaResp OllamaResponse
-	json.Unmarshal(bodyBytes, &ollamaResp)
-
-	var files ProjectFiles
-	err = json.Unmarshal([]byte(ollamaResp.Response), &files)
-	if err != nil {
-		// FIX 2: Print exactly what the AI outputted so we can see where it broke
-		fmt.Println("\n--- DEBUG: RAW AI OUTPUT ---")
-		fmt.Println(ollamaResp.Response)
-		fmt.Println("----------------------------")
-		return nil, fmt.Errorf("unexpected end of JSON input")
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("ollama returned %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
+	var out OllamaResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(out.Response) == "" {
+		return "", fmt.Errorf("ollama returned an empty response")
+	}
+	return out.Response, nil
+}
 
-	return &files, nil
+// readmePrompt describes the generated service to the model using only facts from the scaffold,
+// so the README cannot contradict what was actually generated.
+func readmePrompt(data ScaffoldData, appFiles []string) string {
+	return fmt.Sprintf(`Write a concise README.md in Markdown for a microservice named %q.
+Facts (use only these; do not invent features):
+- Language: %s
+- Database: %s (connection string read from the DATABASE_URL environment variable; no driver is wired in yet)
+- Endpoints: / (service info), /health (liveness), /ready (readiness), /metrics (Prometheus metrics) on port %d
+- Files: %s
+- Build and run: docker build -t %s . && docker run -p %d:%d %s
+- CI: GitHub Actions runs tests, a gitleaks secret scan and a Trivy image scan before pushing the image.
+Sections: Overview, Run locally, Endpoints, Configuration, CI/CD. Keep it under 250 words.`,
+		data.Name, data.Language, data.Database, data.Port, strings.Join(appFiles, ", "),
+		data.Name, data.Port, data.Port, data.Name)
+}
+
+// generateReadme asks the local model for a README. It is optional: callers should warn and carry on if it fails.
+func generateReadme(ctx context.Context, data ScaffoldData, appFiles []string) (string, error) {
+	return askOllama(ctx, readmePrompt(data, appFiles))
 }

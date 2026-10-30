@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -14,6 +16,9 @@ var (
 	projectName string
 	language    string
 	database    string
+	dryRun      bool
+	planOnly    bool
+	useAI       bool
 )
 
 // writeFiles writes a map of relative path -> content under dir, creating folders as needed.
@@ -39,84 +44,118 @@ func sortedKeys(m map[string]string) []string {
 	return keys
 }
 
+// printPlan shows what `create` would do without touching the disk or GitHub.
+func printPlan(s *Scaffold, name, lang, db string, githubConfigured bool) {
+	fmt.Printf("📝 Plan for '%s' (%s, %s)\n\n", name, lang, db)
+	fmt.Printf("Local folder ./%s  (app repo files):\n", name)
+	for _, p := range sortedKeys(s.App) {
+		fmt.Printf("  %-34s %5d bytes\n", p, len(s.App[p]))
+	}
+	fmt.Printf("\nLocal folder ./%s/manifests  (manifest repo files):\n", name)
+	for _, p := range sortedKeys(s.Manifests) {
+		fmt.Printf("  %-34s %5d bytes\n", p, len(s.Manifests[p]))
+	}
+	fmt.Println()
+	if githubConfigured {
+		fmt.Printf("GitHub: would create repos devforge-app-%s and devforge-manifests-%s and upload the files above.\n", name, name)
+	} else {
+		fmt.Println("GitHub: GITHUB_USERNAME/GITHUB_TOKEN not set, so no repositories would be created.")
+	}
+	fmt.Printf("Catalog: would record the service in %s\n\n", catalogPath())
+	fmt.Println("Dry run: nothing was written. Re-run without --dry-run/--plan to create it.")
+}
+
 var createCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Scaffold a new microservice project",
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := validateName(projectName); err != nil {
 			fmt.Println("❌ Error:", err)
-			return
+			os.Exit(1)
 		}
-		fmt.Printf("🚀 DevForge AI is building '%s'...\n", projectName)
-
-		data := newScaffoldData(projectName, database)
-		useTemplates := language == "go"
-
-		// The Go service comes from a tested template, so /health, /ready and /metrics are guaranteed.
-		scaffold, err := buildScaffold(data, useTemplates)
+		lang, err := normalizeLanguage(language)
 		if err != nil {
 			fmt.Println("❌ Error:", err)
+			os.Exit(1)
+		}
+
+		data := newScaffoldData(projectName, lang, database)
+		scaffold, err := buildScaffold(data)
+		if err != nil {
+			fmt.Println("❌ Error:", err)
+			os.Exit(1)
+		}
+
+		githubUser := os.Getenv("GITHUB_USERNAME")
+		githubToken := os.Getenv("GITHUB_TOKEN")
+		githubConfigured := githubUser != "" && githubToken != ""
+
+		if useAI {
+			fmt.Println("🧠 Asking the local Ollama model to write the README...")
+			readme, err := generateReadme(context.Background(), data, sortedKeys(scaffold.App))
+			if err != nil {
+				fmt.Println("⚠️ AI README skipped:", err)
+			} else {
+				scaffold.App["README.md"] = readme
+			}
+		}
+
+		if dryRun || planOnly {
+			printPlan(scaffold, projectName, lang, database, githubConfigured)
 			return
 		}
 
-		// Other languages still use the local AI model for the application code.
-		if !useTemplates {
-			fmt.Printf("⏳ Status: AI Agent is writing the %s code. This takes about 10-30 seconds...\n", language)
-			fmt.Println("⚠️ Only Go uses the built-in template; check the generated code exposes /health and /metrics on port 8080.")
-			files, err := generateCode(projectName, language, database)
-			if err != nil {
-				fmt.Println("❌ Error:", err)
-				return
-			}
-			mainFileName := "main.py"
-			if language == "node" || language == "javascript" {
-				mainFileName = "index.js"
-			}
-			scaffold.App[mainFileName] = files.MainCode
-			scaffold.App["Dockerfile"] = files.Dockerfile
-		}
+		fmt.Printf("🚀 DevForge AI is building '%s' (%s)...\n", projectName, lang)
 
 		// Local layout: <name>/ is the app repo, <name>/manifests/ is the manifest repo.
 		if err := writeFiles(projectName, scaffold.App); err != nil {
 			fmt.Println("❌ Error writing app files:", err)
-			return
+			os.Exit(1)
 		}
 		if err := writeFiles(filepath.Join(projectName, "manifests"), scaffold.Manifests); err != nil {
 			fmt.Println("❌ Error writing manifests:", err)
-			return
+			os.Exit(1)
 		}
 		fmt.Printf("✅ Success! %s has been scaffolded at ./%s\n", projectName, projectName)
-		fmt.Println("📈 Included: /health, /ready, /metrics, ServiceMonitor, alert rules, Grafana dashboard, HPA, PDB, hardened Deployment and CI pipeline")
+		fmt.Println("📈 Included: /health, /ready, /metrics, tests, ServiceMonitor, alert rules, Grafana dashboard, HPA, PDB, Kustomize dev/staging overlays and a CI pipeline with tests, gitleaks and Trivy")
 
-		githubUser := os.Getenv("GITHUB_USERNAME")
-		githubToken := os.Getenv("GITHUB_TOKEN")
-		if githubUser == "" || githubToken == "" {
+		entry := CatalogEntry{
+			Name: projectName, Language: lang, Database: database,
+			Path: "./" + projectName, CreatedAt: time.Now().UTC(),
+		}
+
+		if !githubConfigured {
 			fmt.Println("⚠️ GITHUB_USERNAME or GITHUB_TOKEN environment variables not set. Skipping GitHub upload.")
-			return
+		} else {
+			appRepo := "devforge-app-" + projectName
+			manifestRepo := "devforge-manifests-" + projectName
+
+			fmt.Println("🌐 Creating dual GitHub Repositories for GitOps...")
+			for _, repo := range []string{appRepo, manifestRepo} {
+				if err := createGitHubRepo(repo); err != nil {
+					fmt.Println("⚠️", err)
+				}
+			}
+
+			fmt.Println("⬆️ Uploading files to GitHub APIs...")
+			for _, path := range sortedKeys(scaffold.App) {
+				if err := uploadFileToGitHub(appRepo, path, scaffold.App[path]); err != nil {
+					fmt.Println("⚠️ upload failed:", path, err)
+				}
+			}
+			for _, path := range sortedKeys(scaffold.Manifests) {
+				if err := uploadFileToGitHub(manifestRepo, path, scaffold.Manifests[path]); err != nil {
+					fmt.Println("⚠️ upload failed:", path, err)
+				}
+			}
+			entry.AppRepo = fmt.Sprintf("https://github.com/%s/%s", githubUser, appRepo)
+			entry.ManifestRepo = fmt.Sprintf("https://github.com/%s/%s", githubUser, manifestRepo)
+			fmt.Printf("✅ GitOps Repositories created! Check https://github.com/%s\n", githubUser)
 		}
 
-		appRepo := "devforge-app-" + projectName
-		manifestRepo := "devforge-manifests-" + projectName
-
-		fmt.Println("🌐 Creating dual GitHub Repositories for GitOps...")
-		for _, repo := range []string{appRepo, manifestRepo} {
-			if err := createGitHubRepo(repo); err != nil {
-				fmt.Println("⚠️", err)
-			}
+		if err := recordService(entry); err != nil {
+			fmt.Println("⚠️ Could not update the service catalog:", err)
 		}
-
-		fmt.Println("⬆️ Uploading files to GitHub APIs...")
-		for _, path := range sortedKeys(scaffold.App) {
-			if err := uploadFileToGitHub(appRepo, path, scaffold.App[path]); err != nil {
-				fmt.Println("⚠️ upload failed:", path, err)
-			}
-		}
-		for _, path := range sortedKeys(scaffold.Manifests) {
-			if err := uploadFileToGitHub(manifestRepo, path, scaffold.Manifests[path]); err != nil {
-				fmt.Println("⚠️ upload failed:", path, err)
-			}
-		}
-		fmt.Printf("✅ GitOps Repositories created! Check https://github.com/%s\n", githubUser)
 	},
 }
 
@@ -126,6 +165,9 @@ func init() {
 
 	// Define the flags (e.g., --name, --lang, --db) and their default values
 	createCmd.Flags().StringVarP(&projectName, "name", "n", "my-service", "Name of the microservice")
-	createCmd.Flags().StringVarP(&language, "lang", "l", "go", "Programming language (go uses the built-in template; others use the local AI model)")
+	createCmd.Flags().StringVarP(&language, "lang", "l", "go", "Language template: go, python (FastAPI) or node")
 	createCmd.Flags().StringVarP(&database, "db", "d", "postgres", "Database type (e.g., postgres, redis)")
+	createCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be created without writing anything")
+	createCmd.Flags().BoolVar(&planOnly, "plan", false, "Alias for --dry-run")
+	createCmd.Flags().BoolVar(&useAI, "ai", false, "Also generate a README with the local Ollama model (OLLAMA_URL, OLLAMA_MODEL)")
 }

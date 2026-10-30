@@ -1,0 +1,20 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { createServer } = require('./index');
+
+test('endpoints and metrics', async () => {
+  const server = createServer().listen(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const cases = { '/': 200, '/health': 200, '/ready': 200, '/nope': 404 };
+    for (const [path, want] of Object.entries(cases)) {
+      const res = await fetch(base + path);
+      assert.strictEqual(res.status, want, `GET ${path}`);
+    }
+    const metrics = await (await fetch(base + '/metrics')).text();
+    assert.ok(metrics.includes('http_requests_total'));
+    assert.ok(metrics.includes('http_request_duration_seconds'));
+  } finally {
+    server.close();
+  }
+});

@@ -59,6 +59,26 @@ With `make` installed you can use `make up`, `make chaos`, `make demo` (fake ale
 
 How it flows: chaos engine kills a pod in k3s, exposes `chaos_pod_last_kill_timestamp_seconds`, Prometheus fires `PodKilled`, Alertmanager calls the webhook, the webhook asks Ollama for an RCA and posts it to Slack (or the console if no Slack URL is set).
 
+## Using the CLI
+
+Run it from Docker so nothing needs installing (the folder you mount receives the generated project):
+
+```bash
+docker build -t devforge-cli ./devforge-cli
+docker run --rm -v "$PWD:/workspace" devforge-cli create --name billing-service --lang python --dry-run   # preview only
+docker run --rm -v "$PWD:/workspace" devforge-cli create --name billing-service --lang python
+docker run --rm -v "$PWD:/workspace" devforge-cli list
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--lang go\|python\|node` | Built-in template (default `go`) |
+| `--dry-run` / `--plan` | Show every file that would be created; write nothing |
+| `--ai` | Also write a README using your local Ollama (`OLLAMA_URL`, `OLLAMA_MODEL`) |
+| `--db` | Database name, passed to the app as a `DATABASE_URL` hint |
+
+Set `GITHUB_USERNAME` and `GITHUB_TOKEN` to also create `devforge-app-<name>` and `devforge-manifests-<name>` repositories. Every service gets `/health`, `/ready`, `/metrics`, tests, Kustomize `base/` + `overlays/dev|staging`, alert rules, a Grafana dashboard, and a CI pipeline (tests, gitleaks, Trivy). Created services are listed by `devforge list` from `.devforge/catalog.json`.
+
 ---
 
 # Roadmap / Task list
@@ -104,13 +124,13 @@ All tools listed are **free and open source**. Tick items off as they are comple
 
 ## Phase 4 — Day-1 CLI improvements
 
-- [ ] Language templates: Go, Python (FastAPI), Node.js
-- [ ] `--dry-run` / `--plan` mode that prints what will be created
-- [ ] Optional AI backend via local Ollama (no paid API required)
-- [ ] `devforge list` to show services created (simple local JSON service catalog)
-- [ ] Generated CI pipeline: build, test, **Trivy** image scan, **gitleaks** secret scan (GitHub Actions free tier)
-- [ ] Helm chart or Kustomize overlays (dev/staging) for generated services
-- [ ] Unit tests for template rendering
+- [x] Language templates: Go, Python (FastAPI), Node.js (each with its own tests, metrics and non-root Dockerfile)
+- [x] `--dry-run` / `--plan` mode that prints what will be created
+- [x] Optional AI backend via local Ollama (no paid API required): `--ai` generates the service README; not run against a real model yet
+- [x] `devforge list` to show services created (simple local JSON service catalog)
+- [x] Generated CI pipeline: build, test, **Trivy** image scan, **gitleaks** secret scan (GitHub Actions free tier)
+- [x] Kustomize overlays (dev/staging) for generated services (Helm not used)
+- [x] Unit tests for template rendering
 
 ## Phase 5 — Better chaos engineering
 

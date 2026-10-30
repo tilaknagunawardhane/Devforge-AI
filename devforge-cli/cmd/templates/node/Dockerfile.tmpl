@@ -1,0 +1,10 @@
+FROM node:20-alpine
+ENV NODE_ENV=production
+WORKDIR /app
+COPY package.json ./
+RUN npm install --omit=dev --no-audit --no-fund
+COPY index.js ./
+# Run as non-root
+USER 65532:65532
+EXPOSE [[.Port]]
+CMD ["node", "index.js"]

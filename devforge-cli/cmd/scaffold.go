@@ -18,8 +18,10 @@ var templateFS embed.FS
 type ScaffoldData struct {
 	Name        string
 	AlertPrefix string // CamelCase version of Name, used in alert names
+	Language    string // go, python or node
 	Database    string
 	Port        int
+	Env         string // only set while rendering per-environment files
 }
 
 // Scaffold is the rendered output: app files go in the app repo, manifests in the manifest repo.
@@ -28,24 +30,50 @@ type Scaffold struct {
 	Manifests map[string]string // output path (relative to the manifests dir) -> content
 }
 
+// SupportedLanguages lists the --lang values that have a built-in template.
+var SupportedLanguages = []string{"go", "python", "node"}
+
 // Template source -> output path.
 var (
-	goAppTemplates = map[string]string{
-		"templates/go/main.go.tmpl":    "main.go",
-		"templates/go/go.mod.tmpl":     "go.mod",
-		"templates/go/Dockerfile.tmpl": "Dockerfile",
+	appTemplates = map[string]map[string]string{
+		"go": {
+			"templates/go/main.go.tmpl":      "main.go",
+			"templates/go/main_test.go.tmpl": "main_test.go",
+			"templates/go/go.mod.tmpl":       "go.mod",
+			"templates/go/Dockerfile.tmpl":   "Dockerfile",
+		},
+		"python": {
+			"templates/python/main.py.tmpl":              "main.py",
+			"templates/python/test_main.py.tmpl":         "test_main.py",
+			"templates/python/requirements.txt.tmpl":     "requirements.txt",
+			"templates/python/requirements-dev.txt.tmpl": "requirements-dev.txt",
+			"templates/python/Dockerfile.tmpl":           "Dockerfile",
+		},
+		"node": {
+			"templates/node/index.js.tmpl":      "index.js",
+			"templates/node/index.test.js.tmpl": "index.test.js",
+			"templates/node/package.json.tmpl":  "package.json",
+			"templates/node/Dockerfile.tmpl":    "Dockerfile",
+		},
 	}
 	ciTemplates = map[string]string{
 		"templates/ci/ci.yml.tmpl": ".github/workflows/ci.yml",
 	}
+	// Kustomize layout: base/ is shared, overlays/<env>/ customises it. monitoring/ holds
+	// files that are not part of the kustomization (dashboards and plain Prometheus rules).
 	manifestTemplates = map[string]string{
-		"templates/manifests/deployment.yaml.tmpl":        "deployment.yaml",
-		"templates/manifests/service.yaml.tmpl":           "service.yaml",
-		"templates/manifests/hpa.yaml.tmpl":               "hpa.yaml",
-		"templates/manifests/pdb.yaml.tmpl":               "pdb.yaml",
-		"templates/manifests/servicemonitor.yaml.tmpl":    "servicemonitor.yaml",
-		"templates/manifests/alerts.rules.yml.tmpl":       "alerts.rules.yml",
-		"templates/manifests/grafana-dashboard.json.tmpl": "grafana-dashboard.json",
+		"templates/manifests/deployment.yaml.tmpl":         "base/deployment.yaml",
+		"templates/manifests/service.yaml.tmpl":            "base/service.yaml",
+		"templates/manifests/hpa.yaml.tmpl":                "base/hpa.yaml",
+		"templates/manifests/pdb.yaml.tmpl":                "base/pdb.yaml",
+		"templates/manifests/servicemonitor.yaml.tmpl":     "base/servicemonitor.yaml",
+		"templates/kustomize/base-kustomization.yaml.tmpl": "base/kustomization.yaml",
+		"templates/manifests/alerts.rules.yml.tmpl":        "monitoring/alerts.rules.yml",
+		"templates/manifests/grafana-dashboard.json.tmpl":  "monitoring/grafana-dashboard.json",
+	}
+	overlayTemplates = map[string]string{ // env -> template
+		"dev":     "templates/kustomize/overlay-dev.yaml.tmpl",
+		"staging": "templates/kustomize/overlay-staging.yaml.tmpl",
 	}
 )
 
@@ -59,6 +87,19 @@ func validateName(name string) error {
 	return nil
 }
 
+// normalizeLanguage maps aliases to a supported language, or returns an error listing the options.
+func normalizeLanguage(lang string) (string, error) {
+	switch strings.ToLower(lang) {
+	case "go", "golang":
+		return "go", nil
+	case "python", "py", "fastapi":
+		return "python", nil
+	case "node", "nodejs", "javascript", "js":
+		return "node", nil
+	}
+	return "", fmt.Errorf("unsupported language %q: choose one of %s", lang, strings.Join(SupportedLanguages, ", "))
+}
+
 func camelCase(name string) string {
 	var b strings.Builder
 	for _, part := range strings.Split(name, "-") {
@@ -69,8 +110,8 @@ func camelCase(name string) string {
 	return b.String()
 }
 
-func newScaffoldData(name, database string) ScaffoldData {
-	return ScaffoldData{Name: name, AlertPrefix: camelCase(name), Database: database, Port: 8080}
+func newScaffoldData(name, language, database string) ScaffoldData {
+	return ScaffoldData{Name: name, AlertPrefix: camelCase(name), Language: language, Database: database, Port: 8080}
 }
 
 func renderTemplate(src string, data ScaffoldData) (string, error) {
@@ -112,11 +153,19 @@ func prometheusRuleManifest(name, groups string) string {
 	return b.String()
 }
 
-// buildScaffold renders everything that does not depend on the language: CI and the
-// Kubernetes/observability manifests. If includeGoApp is set, the Go service is rendered too.
-func buildScaffold(data ScaffoldData, includeGoApp bool) (*Scaffold, error) {
-	s := &Scaffold{App: map[string]string{}}
+// buildScaffold renders the application, CI pipeline and Kubernetes/observability manifests
+// for a supported language ("go", "python" or "node").
+func buildScaffold(data ScaffoldData) (*Scaffold, error) {
+	set, ok := appTemplates[data.Language]
+	if !ok {
+		return nil, fmt.Errorf("no template for language %q", data.Language)
+	}
+	s := &Scaffold{}
 
+	var err error
+	if s.App, err = renderSet(set, data); err != nil {
+		return nil, err
+	}
 	ci, err := renderSet(ciTemplates, data)
 	if err != nil {
 		return nil, err
@@ -124,20 +173,25 @@ func buildScaffold(data ScaffoldData, includeGoApp bool) (*Scaffold, error) {
 	for k, v := range ci {
 		s.App[k] = v
 	}
-	if includeGoApp {
-		app, err := renderSet(goAppTemplates, data)
+
+	if s.Manifests, err = renderSet(manifestTemplates, data); err != nil {
+		return nil, err
+	}
+	s.Manifests["base/prometheusrule.yaml"] = prometheusRuleManifest(data.Name, s.Manifests["monitoring/alerts.rules.yml"])
+
+	for env, src := range overlayTemplates {
+		envData := data
+		envData.Env = env
+		kustomization, err := renderTemplate(src, envData)
 		if err != nil {
 			return nil, err
 		}
-		for k, v := range app {
-			s.App[k] = v
+		namespace, err := renderTemplate("templates/kustomize/namespace.yaml.tmpl", envData)
+		if err != nil {
+			return nil, err
 		}
+		s.Manifests["overlays/"+env+"/kustomization.yaml"] = kustomization
+		s.Manifests["overlays/"+env+"/namespace.yaml"] = namespace
 	}
-
-	s.Manifests, err = renderSet(manifestTemplates, data)
-	if err != nil {
-		return nil, err
-	}
-	s.Manifests["prometheusrule.yaml"] = prometheusRuleManifest(data.Name, s.Manifests["alerts.rules.yml"])
 	return s, nil
 }
