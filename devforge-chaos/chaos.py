@@ -1,69 +1,148 @@
+import itertools
+import logging
 import os
-import time
 import random
-from kubernetes import client, config
-from prometheus_client import Counter, Gauge, start_http_server
+import signal
+import threading
+import time
 
-NAMESPACE = os.getenv("TARGET_NAMESPACE", "default")
-INTERVAL = int(os.getenv("CHAOS_INTERVAL_SECONDS", "60"))
-METRICS_PORT = int(os.getenv("METRICS_PORT", "8000"))
+from prometheus_client import start_http_server
 
-POD_KILLS = Counter(
-    "chaos_pod_kills_total",
-    "Pods terminated by the chaos engine",
-    ["pod", "namespace"],
-)
+import metrics
+import report
+from config import ConfigError, load_config
+from experiments import EXPERIMENTS, ExperimentError
+from recovery import wait_for_recovery
+from targets import baseline_ready, eligible_pods, pick_targets
 
-
-LAST_KILL = Gauge(
-    "chaos_pod_last_kill_timestamp_seconds",
-    "Unix time of the last kill of a pod",
-    ["pod", "namespace"],
-)
+log = logging.getLogger("chaos")
 
 
-def load_k8s_config():
-    """In-cluster when running as a pod, kubeconfig when running in Docker Compose."""
-    try:
-        config.load_incluster_config()
-    except config.ConfigException:
-        config.load_kube_config()
-        # kubeconfig points at 127.0.0.1; allow overriding to the compose service name
-        host = os.getenv("KUBE_API_HOST")
-        if host:
-            cfg = client.Configuration.get_default_copy()
-            cfg.host = host
-            client.Configuration.set_default(cfg)
+class Controller:
+    """Runs experiments one at a time, honouring the kill switch and shutdown signals."""
+
+    def __init__(self, cfg, api, clock=time.monotonic, sleep=time.sleep, rng=None):
+        self.cfg = cfg
+        self.api = api
+        self.clock = clock
+        self.sleep = sleep
+        self.rng = rng
+        self.stop = threading.Event()
+
+    # ---- kill switch -------------------------------------------------------------
+    def paused(self):
+        return os.path.exists(self.cfg.kill_switch_file)
+
+    def aborted(self):
+        return self.stop.is_set() or self.paused()
+
+    def hold(self, seconds):
+        """Wait up to `seconds`, returning early if the kill switch is flipped or we are shutting down."""
+        end = self.clock() + seconds
+        while self.clock() < end and not self.aborted():
+            self.sleep(min(1.0, max(0.0, end - self.clock())))
+
+    # ---- one experiment ----------------------------------------------------------
+    def run_experiment(self, name):
+        cfg = self.cfg
+        record = report.Record(experiment=name, namespace=cfg.namespace)
+
+        pods = eligible_pods(self.api.list_pods(cfg.namespace, cfg.selector), cfg)
+        if not pods:
+            record.result, record.detail = "skipped", "no eligible pods"
+            return self._finish(record)
+        targets = pick_targets(pods, cfg, self.rng or random)
+        record.targets = [p.metadata.name for p in targets]
+
+        if cfg.dry_run:
+            record.result, record.detail = "dry-run", f"would run {name} on {', '.join(record.targets)}"
+            return self._finish(record)
+
+        baseline = baseline_ready(self.api.list_pods(cfg.namespace, cfg.selector))
+        try:
+            outcome = EXPERIMENTS[name](self.api, cfg, self, targets)
+        except ExperimentError as e:
+            record.result, record.detail = "failed", str(e)
+            return self._finish(record)
+        except Exception as e:  # keep the engine alive on API errors
+            record.result, record.detail = "failed", f"{type(e).__name__}: {e}"
+            return self._finish(record)
+
+        for pod in outcome.injected:
+            metrics.record_injection(name, pod.metadata.name, pod.metadata.namespace)
+        record.targets, record.detail = outcome.targets or record.targets, outcome.detail
+
+        seconds = wait_for_recovery(
+            lambda: self.api.list_pods(cfg.namespace, cfg.selector),
+            baseline, outcome.recovery_from, cfg.recovery_timeout,
+            clock=self.clock, sleep=self.sleep,
+        )
+        if seconds is None:
+            record.result = "not-recovered"
+            record.detail += f"; not healthy after {cfg.recovery_timeout}s"
+        else:
+            record.recovery_seconds = round(seconds, 2)
+        return self._finish(record)
+
+    def _finish(self, record):
+        metrics.record_result(record.experiment, record.result, record.recovery_seconds)
+        report.append_record(self.cfg.report_dir, record)
+        report.write_report(self.cfg.report_dir)
+        rec = "" if record.recovery_seconds is None else f" recovery={record.recovery_seconds}s"
+        log.info("experiment=%s result=%s targets=%s%s %s", record.experiment, record.result,
+                 ",".join(record.targets) or "-", rec, record.detail)
+        return record
+
+    # ---- main loop -----------------------------------------------------------------
+    def cleanup_stale(self):
+        """If a previous run died mid-experiment, undo what it left behind."""
+        try:
+            for node in self.api.nodes_cordoned_by_chaos():
+                log.warning("uncordoning node %s left cordoned by a previous run", node)
+                self.api.set_cordon(node, False)
+        except Exception as e:
+            log.warning("stale cleanup skipped: %s", e)
+
+    def wait_interval(self):
+        end = self.clock() + self.cfg.interval
+        while self.clock() < end and not self.stop.is_set():
+            metrics.PAUSED.set(1 if self.paused() else 0)
+            self.sleep(1.0)
+
+    def run_forever(self):
+        self.cleanup_stale()
+        for name in itertools.cycle(self.cfg.experiments):
+            if self.stop.is_set():
+                break
+            metrics.PAUSED.set(1 if self.paused() else 0)
+            if self.paused():
+                log.info("kill switch active (%s exists); not running experiments", self.cfg.kill_switch_file)
+                self.sleep(5)
+                continue
+            self.run_experiment(name)
+            self.wait_interval()
+        log.info("chaos engine stopped")
 
 
 def main():
-    print("🌪️ DevForge Chaos Engine started...")
-    load_k8s_config()
-    v1 = client.CoreV1Api()
-    start_http_server(METRICS_PORT)
-    print(f"📈 Metrics on :{METRICS_PORT}, targeting namespace '{NAMESPACE}' every {INTERVAL}s")
+    logging.basicConfig(level=logging.INFO, format='{"time":"%(asctime)s","level":"%(levelname)s","msg":"%(message)s"}')
+    try:
+        cfg = load_config()
+    except ConfigError as e:
+        log.error("invalid configuration: %s", e)
+        raise SystemExit(2)
 
-    while True:
-        pods = v1.list_namespaced_pod(NAMESPACE)
+    from k8s_api import K8s
 
-        # Filter out the chaos engine itself and any pods that are not running
-        target_pods = [p for p in pods.items if "chaos" not in p.metadata.name and p.status.phase == "Running"]
+    ctl = Controller(cfg, K8s())
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: ctl.stop.set())
 
-        if not target_pods:
-            print("No active target pods found. Waiting 30 seconds...")
-            time.sleep(30)
-            continue
-
-        victim = random.choice(target_pods)
-        pod_name = victim.metadata.name
-
-        print(f"💀 Chaos Event: Terminating pod '{pod_name}'...")
-        v1.delete_namespaced_pod(name=pod_name, namespace=NAMESPACE)
-        POD_KILLS.labels(pod=pod_name, namespace=NAMESPACE).inc()
-        LAST_KILL.labels(pod=pod_name, namespace=NAMESPACE).set_to_current_time()
-        print(f"✅ Terminated '{pod_name}'. Kubernetes should heal it.")
-
-        time.sleep(INTERVAL)
+    metrics.DRY_RUN.set(1 if cfg.dry_run else 0)
+    start_http_server(cfg.metrics_port)
+    log.info("DevForge Chaos Engine started: namespace=%s selector=%r experiments=%s interval=%ss dry_run=%s kill_switch=%s",
+             cfg.namespace, cfg.selector, ",".join(cfg.experiments), cfg.interval, cfg.dry_run, cfg.kill_switch_file)
+    ctl.run_forever()
 
 
 if __name__ == '__main__':

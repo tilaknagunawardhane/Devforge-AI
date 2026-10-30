@@ -1,4 +1,4 @@
-.PHONY: up chaos down clean demo logs ps
+.PHONY: up chaos chaos-pause chaos-resume chaos-report down clean demo logs ps
 
 # Core stack: webhook, Ollama (pulls the model), Prometheus, Alertmanager, Grafana
 up:
@@ -13,6 +13,17 @@ demo:
 	docker compose exec -T webhook wget -qO- --header="Content-Type: application/json" \
 		--post-data='{"alerts":[{"labels":{"pod":"demo-app-test-1234"}}]}' http://localhost:9090/alert || true
 	docker compose logs webhook --tail 10
+
+# Kill switch: stops new experiments immediately and aborts any running hold
+chaos-pause:
+	docker compose exec chaos touch /var/run/chaos/pause
+
+chaos-resume:
+	docker compose exec chaos rm -f /var/run/chaos/pause
+
+# Latest report is written to ./reports/chaos-report.md after every experiment
+chaos-report:
+	@cat reports/chaos-report.md
 
 logs:
 	docker compose --profile k8s logs -f webhook chaos

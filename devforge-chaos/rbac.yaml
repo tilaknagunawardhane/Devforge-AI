@@ -4,6 +4,7 @@ metadata:
   name: chaos-sa
   namespace: default
 ---
+# Namespace-scoped permissions: only the target namespace can be attacked.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -13,6 +14,12 @@ rules:
 - apiGroups: [""]
   resources: ["pods"]
   verbs: ["get", "list", "delete"]
+- apiGroups: [""]
+  resources: ["pods/exec"]        # cpu-stress, memory-stress
+  verbs: ["create"]
+- apiGroups: [""]
+  resources: ["pods/eviction"]    # node-drain
+  verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -22,7 +29,32 @@ metadata:
 subjects:
 - kind: ServiceAccount
   name: chaos-sa
+  namespace: default
 roleRef:
   kind: Role
   name: chaos-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Node-drain only: cordon/uncordon needs cluster-wide node access. Remove this (and leave
+# node-drain out of CHAOS_EXPERIMENTS) if you do not want the engine to touch nodes.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: chaos-node-role
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: chaos-node-binding
+subjects:
+- kind: ServiceAccount
+  name: chaos-sa
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: chaos-node-role
   apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,75 @@
+{
+  "title": "Chaos Engineering - Faults vs Recovery",
+  "uid": "devforge-chaos",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "tags": ["devforge", "chaos"],
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Engine state",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": {
+        "mappings": [{ "type": "value", "options": { "0": { "text": "RUNNING" }, "1": { "text": "PAUSED (kill switch)" } } }],
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] },
+        "color": { "mode": "thresholds" }
+      }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "max(chaos_paused)" }]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Experiments (last hour)",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(increase(chaos_experiments_total[1h]))" }]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Last recovery time by experiment",
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 1 }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "chaos_last_recovery_seconds", "legendFormat": "{{experiment}}" }]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Faults injected vs recovery time",
+      "description": "Bars: experiments run. Line: recovery time (MTTR) of the latest experiment of each type.",
+      "gridPos": { "h": 9, "w": 14, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "spanNulls": true } }, "overrides": [
+        { "matcher": { "id": "byRegexp", "options": "injected.*" },
+          "properties": [{ "id": "custom.drawStyle", "value": "bars" }, { "id": "custom.axisPlacement", "value": "right" }, { "id": "unit", "value": "short" }] },
+        { "matcher": { "id": "byRegexp", "options": "recovery.*" },
+          "properties": [{ "id": "unit", "value": "s" }] }
+      ] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (experiment) (increase(chaos_experiments_total{result!=\"dry-run\",result!=\"skipped\"}[1m]))", "legendFormat": "injected {{experiment}}" },
+        { "refId": "B", "expr": "chaos_last_recovery_seconds", "legendFormat": "recovery {{experiment}}" }
+      ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Recovery time percentiles (MTTR)",
+      "gridPos": { "h": 9, "w": 10, "x": 14, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.5, sum by (le, experiment) (rate(chaos_recovery_seconds_bucket[10m])))", "legendFormat": "p50 {{experiment}}" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le, experiment) (rate(chaos_recovery_seconds_bucket[10m])))", "legendFormat": "p95 {{experiment}}" }
+      ]
+    },
+    {
+      "id": 6, "type": "barchart", "title": "Experiments by result",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (experiment, result) (chaos_experiments_total)", "legendFormat": "{{experiment}} / {{result}}", "instant": true }]
+    },
+    {
+      "id": 7, "type": "table", "title": "Recent injections",
+      "description": "Seconds since a fault was last injected into each pod.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "sort(time() - chaos_last_injection_timestamp_seconds)", "format": "table", "instant": true }]
+    }
+  ]
+}

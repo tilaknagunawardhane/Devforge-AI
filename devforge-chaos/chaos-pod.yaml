@@ -8,4 +8,13 @@ spec:
   - name: chaos
     image: devforge-chaos:latest
     imagePullPolicy: Never
+    env:
+    - name: TARGET_NAMESPACE
+      value: default
+    - name: CHAOS_EXPERIMENTS
+      value: pod-kill
+    - name: CHAOS_INTERVAL_SECONDS
+      value: "60"
+    # - name: CHAOS_DRY_RUN       # uncomment to only log what would happen
+    #   value: "true"
   restartPolicy: Never

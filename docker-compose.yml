@@ -78,6 +78,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     ports:
       - "3000:3000"
@@ -130,9 +131,17 @@ services:
     environment:
       KUBECONFIG: /kube/kubeconfig.yaml
       KUBE_API_HOST: https://k3s:6443
+      TARGET_NAMESPACE: default
+      TARGET_SELECTOR: ${TARGET_SELECTOR:-}
+      CHAOS_EXPERIMENTS: ${CHAOS_EXPERIMENTS:-pod-kill}   # pod-kill,cpu-stress,memory-stress,node-drain
       CHAOS_INTERVAL_SECONDS: ${CHAOS_INTERVAL_SECONDS:-60}
+      CHAOS_DURATION_SECONDS: ${CHAOS_DURATION_SECONDS:-30}
+      CHAOS_MAX_TARGETS: ${CHAOS_MAX_TARGETS:-1}
+      CHAOS_DRY_RUN: ${CHAOS_DRY_RUN:-false}
+      CHAOS_ALLOW_SINGLE_NODE_DRAIN: ${CHAOS_ALLOW_SINGLE_NODE_DRAIN:-false}
     volumes:
       - kubeconfig:/kube:ro
+      - ./reports:/reports
     restart: on-failure
 
 volumes:

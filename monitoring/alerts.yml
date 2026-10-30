@@ -1,11 +1,20 @@
 groups:
   - name: chaos
     rules:
-      - alert: PodKilled
-        # fires for 2 minutes after each kill (a new counter series has no prior sample, so increase() would miss it)
-        expr: (time() - chaos_pod_last_kill_timestamp_seconds) < 120
+      - alert: ChaosFaultInjected
+        # Fires for 2 minutes after each real injection (a brand-new series has no earlier sample,
+        # so increase() would miss it). Dry runs never set this metric, so they never alert.
+        expr: (time() - chaos_last_injection_timestamp_seconds) < 120
         for: 0s
         labels:
           severity: warning
         annotations:
-          summary: "Pod {{ $labels.pod }} was terminated"
+          summary: "{{ $labels.experiment }} injected into pod {{ $labels.pod }}"
+      - alert: ChaosNotRecovering
+        # The engine gave up waiting for the workload to become healthy again
+        expr: increase(chaos_experiments_total{result="not-recovered"}[5m]) > 0
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Workload did not recover after a {{ $labels.experiment }} experiment"

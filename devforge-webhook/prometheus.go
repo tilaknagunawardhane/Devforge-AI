@@ -45,8 +45,8 @@ func collectPromEvidence(ctx context.Context, cfg Config, ev *Evidence) {
 		return
 	}
 	queries := []struct{ label, q string }{
-		{"pods terminated by chaos in this namespace, last 10m", fmt.Sprintf(`count(chaos_pod_last_kill_timestamp_seconds{namespace=%q} > (time() - 600)) or vector(0)`, ev.Namespace)},
-		{"pods terminated by chaos in any namespace, last 1h", `count(chaos_pod_last_kill_timestamp_seconds > (time() - 3600)) or vector(0)`},
+		{"pods hit by chaos faults in this namespace, last 10m", fmt.Sprintf(`count(chaos_last_injection_timestamp_seconds{namespace=%q} > (time() - 600)) or vector(0)`, ev.Namespace)},
+		{"pods hit by chaos faults in any namespace, last 1h", `count(chaos_last_injection_timestamp_seconds > (time() - 3600)) or vector(0)`},
 	}
 	for _, q := range queries {
 		v, err := promQuery(ctx, cfg.PrometheusURL, q.q)

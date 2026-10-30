@@ -23,3 +23,7 @@ venv/
 
 # Local data
 *.log
+
+# Chaos reports (generated)
+reports/*
+!reports/.gitkeep
