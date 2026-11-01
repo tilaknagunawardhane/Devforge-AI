@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func alertFor(name, pod, ns string) Alert {
@@ -170,5 +174,29 @@ func TestResolvedAlertsInFiringGroupAreSkipped(t *testing.T) {
 	al.Status = "resolved"
 	if got := app.handleGroup(AlertPayload{GroupKey: "g", Status: "firing", Alerts: []Alert{al}}); got != "ignored" {
 		t.Errorf("got %q, want ignored", got)
+	}
+}
+
+// Proposals come from rules, not from the LLM, so they must exist even when the model is unreachable.
+func TestProposalsDoNotWaitForTheLLM(t *testing.T) {
+	cs := cluster(time.Minute, true, nil)
+	app := remediationApp(t, cs, Config{RecentRolloutWindow: time.Hour})
+	// Make the pod look crash looping and let the (unreachable) LLM fail.
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-v2-aaaaa", Namespace: "shop"},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "web", RestartCount: 5,
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}}}}
+	if _, err := cs.CoreV1().Pods("shop").Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	p := AlertPayload{GroupKey: "g", Alerts: []Alert{alertFor("HighErrorRate", "web-v2-aaaaa", "shop")}}
+	if app.handleGroup(p) != "created" {
+		t.Fatal("expected a new incident")
+	}
+	waitRCA(t, app, 1)
+
+	acts, _ := app.store.ActionsForIncident(1)
+	if len(acts) != 1 || acts[0].Kind != KindRollback || acts[0].Status != ActionProposed {
+		t.Fatalf("want one proposed rollback even though the LLM failed, got %+v", acts)
 	}
 }

@@ -64,12 +64,12 @@ func TestVerifySlack(t *testing.T) {
 
 func TestSlackPayloadButtonsOnlyWithSecret(t *testing.T) {
 	inc := Incident{ID: 4, Subject: "web", AlertCount: 2}
-	plain := string(slackPayload(Config{PublicURL: "http://x"}, inc, "report"))
+	plain := string(slackPayload(Config{PublicURL: "http://x"}, inc, "report", nil))
 	if strings.Contains(plain, "blocks") || !strings.Contains(plain, "http://x/incidents/4") {
 		t.Errorf("plain payload wrong: %s", plain)
 	}
-	rich := string(slackPayload(Config{PublicURL: "http://x", SlackSecret: secret}, inc, "report"))
-	for _, want := range []string{`"action_id":"ack"`, `"action_id":"restart"`, `"confirm"`, `"value":"4"`} {
+	rich := string(slackPayload(Config{PublicURL: "http://x", SlackSecret: secret}, inc, "report", nil))
+	for _, want := range []string{`"action_id":"ack"`, `"action_id":"restart"`, `"action_id":"rollback"`, `"confirm"`, `"value":"4"`} {
 		if !strings.Contains(rich, want) {
 			t.Errorf("buttons payload missing %s", want)
 		}
@@ -160,7 +160,7 @@ func TestAcknowledgeTeachesRetrievalOnlyRealAnalyses(t *testing.T) {
 }
 
 func TestSlackRestartPatchesDeployment(t *testing.T) {
-	app := newTestApp(t, Config{SlackSecret: secret})
+	app := newTestApp(t, Config{SlackSecret: secret, RemediationNamespaces: []string{"shop"}})
 	cs := fake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "shop"}})
 	app.kube = func() (kubernetes.Interface, error) { return cs, nil }
 	inc, _ := app.store.Create(Incident{Key: "k", Subject: "web", Namespace: "shop", Pods: "web-5d-aaa"})
@@ -174,10 +174,11 @@ func TestSlackRestartPatchesDeployment(t *testing.T) {
 	if dep.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"] == "" {
 		t.Error("restartedAt annotation was not set")
 	}
+	waitAudit(t, app, auditVerifyFail) // the fake cluster never reports a finished rollout
 }
 
 func TestSlackRestartFailsSafely(t *testing.T) {
-	app := newTestApp(t, Config{SlackSecret: secret})
+	app := newTestApp(t, Config{SlackSecret: secret, RemediationNamespaces: []string{"shop"}})
 	app.kube = func() (kubernetes.Interface, error) { return fake.NewSimpleClientset(), nil } // no deployments
 	withPods, _ := app.store.Create(Incident{Key: "a", Subject: "web", Namespace: "shop", Pods: "web-5d-aaa"})
 	noPods, _ := app.store.Create(Incident{Key: "b", Subject: "billing", Namespace: "shop"})

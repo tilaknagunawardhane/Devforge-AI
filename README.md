@@ -131,6 +131,45 @@ Run its tests: `docker run --rm -v "${PWD}/devforge-chaos:/app" -w /app python:3
 | `RAG_MIN_SCORE`, `RAG_RESULTS` | `0.4`, `3` | Retrieval cut-off and number of sections |
 | `PUBLIC_URL` | `http://localhost:9090` | Base URL in links inside Slack messages |
 
+## Auto-remediation
+
+The webhook can change a cluster, so it is built around one rule: **rules propose, a named person approves, everything is audited.**
+
+```
+alert group -> incident -> evidence (pod status, rollout history)
+                         -> rules -> PROPOSED actions  (shown in Slack and on /incidents/<id>)
+                                      -> a person approves -> policy checks -> executed -> verified
+                                      -> every step appended to the audit log (/audit)
+```
+
+| Rule | Evidence it needs | Proposal |
+|---|---|---|
+| `crashloop-after-rollout-rollback` | a pod is crash looping, the current ReplicaSet is newer than `RECENT_ROLLOUT_SECONDS` (30 min), and an older revision exists | **rollback** to the previous revision (what `kubectl rollout undo` does) |
+| `oom-raise-memory-limit-pr` | a container was `OOMKilled`, and GitHub is configured | **open-pr**: a pull request doubling `limits.memory` in `base/deployment.yaml` of the manifest repo (up to `REMEDIATION_MAX_MEMORY_MI`, default 1024) |
+
+Rules read structured pod status, never the LLM's text, so a wrong model answer cannot trigger an action. They run before the LLM call, so a slow or down model never delays a proposal. `ChaosFaultInjected` alerts are ignored because chaos faults are deliberate and Kubernetes heals them. **Restart** and **Roll back** are also available as Slack buttons for a person to start manually; those go through the same checks and audit.
+
+**Approving.** Click **Approve** in Slack, or call the API with the webhook token:
+
+```bash
+curl -X POST -H "Authorization: Bearer $(cat monitoring/webhook-token)" -H "X-Actor: alice" http://localhost:9090/actions/1/approve
+```
+
+`/actions/<id>/reject` declines it. Each action can be decided exactly once (a second click gets `409`), and an unapproved proposal expires after `PROPOSAL_TTL_SECONDS` (30 min).
+
+**Safety checks before anything runs** (a failed check is refused, audited as `blocked`, and leaves the proposal open):
+
+- The namespace must be in `REMEDIATION_NAMESPACES` (Compose sets `default`; an empty list disables remediation). `kube-*` namespaces are always refused.
+- If `REMEDIATION_APPROVERS` is set, only those names may approve.
+- A Deployment labelled `devforge.io/no-remediation: "true"` is never touched.
+- Cooldown: no second action on the same workload within `REMEDIATION_COOLDOWN_SECONDS` (5 min).
+- `REMEDIATION_DRY_RUN=true` records approvals but changes nothing.
+- After a rollback or restart the webhook watches the rollout and records `verified` or `verify-failed`.
+
+**Fix pull requests.** Set `WEBHOOK_GITHUB_TOKEN` (a fine-grained token with contents and pull-requests write on the manifest repos only; deliberately not your personal `GITHUB_TOKEN`) and `GITHUB_REPO_TEMPLATE` (for example `your-user/devforge-manifests-{deployment}`, matching what the CLI creates). The PR contains the incident, the rule, who approved, and the RCA. DevForge never merges it.
+
+**Audit log.** `GET /audit` shows every proposal, approval, rejection, block, execution, dry-run and verification, with the actor. It lives in SQLite with triggers that make `UPDATE` and `DELETE` fail, and each entry is also written to the JSON log. The pages are read-only and not password protected.
+
 ---
 
 # Roadmap / Task list
@@ -199,14 +238,14 @@ All tools listed are **free and open source**. Tick items off as they are comple
 - [x] Alert deduplication and grouping so Slack isn't spammed
 - [x] LLM-written incident timeline summary
 - [x] Runbook "RAG": embed runbooks and past RCAs in a free vector store (Chroma or Qdrant in Docker) and feed relevant context to the model
-- [ ] Slack interactive buttons (Acknowledge, Restart, Rollback) calling back into the webhook (partial: Acknowledge and Restart are built, signed and unit-tested; Rollback is Phase 7; not tried against real Slack, which needs a public HTTPS URL)
+- [ ] Slack interactive buttons (Acknowledge, Restart, Rollback) calling back into the webhook (partial: Acknowledge, Restart, Roll back, Approve and Reject are built, signed and unit-tested; not tried against real Slack, which needs a public HTTPS URL)
 - [x] Store past incidents in SQLite/Postgres and expose a small `/incidents` page
 
 ## Phase 7 — Auto-remediation
 
-- [ ] Rule-based safe actions (restart, rollback to previous ReplicaSet) with human approval
-- [ ] Webhook opens a GitHub pull request proposing a fix (e.g. raise memory limit) based on the RCA
-- [ ] Audit log of every automated action
+- [x] Rule-based safe actions (restart, rollback to previous ReplicaSet) with human approval (rules propose rollback and fix PRs; restart is a manual button because no rule shows it helps)
+- [x] Webhook opens a GitHub pull request proposing a fix (e.g. raise memory limit) based on the RCA (based on pod status, not the LLM's text; tested against a fake GitHub API only)
+- [x] Audit log of every automated action
 
 ## Phase 8 — GitOps & platform polish
 

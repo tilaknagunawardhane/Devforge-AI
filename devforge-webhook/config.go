@@ -31,6 +31,30 @@ type Config struct {
 	RAGMinScore  float64
 	RAGResults   int
 	QdrantCollec string
+
+	// Auto-remediation. Nothing runs without a human approval; these are the limits around it.
+	RemediationNamespaces []string      // actions may only touch these namespaces; empty disables execution
+	RemediationDryRun     bool          // approved actions are recorded but change nothing
+	RemediationCooldown   time.Duration // minimum gap between executed actions on the same workload
+	ProposalTTL           time.Duration // a proposal can no longer be approved after this long
+	Approvers             []string      // Slack / API user names allowed to approve; empty = anyone who can reach the endpoint
+	RecentRolloutWindow   time.Duration // "crash loop after a rollout" only counts rollouts newer than this
+
+	GitHubToken        string // fine-grained token with contents + pull-requests write on the manifest repos
+	GitHubAPI          string
+	GitHubRepoTemplate string // e.g. "your-user/devforge-manifests-{deployment}"
+	GitHubManifestPath string
+	MaxMemoryMi        int // the PR rule never proposes a memory limit above this
+}
+
+func getenvList(key string) []string {
+	var out []string
+	for _, v := range strings.Split(os.Getenv(key), ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func getenv(key, fallback string) string {
@@ -84,5 +108,18 @@ func loadConfig() Config {
 		RAGMinScore:  getenvFloat("RAG_MIN_SCORE", 0.4),
 		RAGResults:   getenvInt("RAG_RESULTS", 3),
 		QdrantCollec: getenv("QDRANT_COLLECTION", "devforge"),
+
+		RemediationNamespaces: getenvList("REMEDIATION_NAMESPACES"),
+		RemediationDryRun:     strings.EqualFold(os.Getenv("REMEDIATION_DRY_RUN"), "true"),
+		RemediationCooldown:   time.Duration(getenvInt("REMEDIATION_COOLDOWN_SECONDS", 300)) * time.Second,
+		ProposalTTL:           time.Duration(getenvInt("PROPOSAL_TTL_SECONDS", 1800)) * time.Second,
+		Approvers:             getenvList("REMEDIATION_APPROVERS"),
+		RecentRolloutWindow:   time.Duration(getenvInt("RECENT_ROLLOUT_SECONDS", 1800)) * time.Second,
+
+		GitHubToken:        os.Getenv("GITHUB_TOKEN"),
+		GitHubAPI:          strings.TrimRight(getenv("GITHUB_API_URL", "https://api.github.com"), "/"),
+		GitHubRepoTemplate: os.Getenv("GITHUB_REPO_TEMPLATE"),
+		GitHubManifestPath: getenv("GITHUB_MANIFEST_PATH", "base/deployment.yaml"),
+		MaxMemoryMi:        getenvInt("REMEDIATION_MAX_MEMORY_MI", 1024),
 	}
 }

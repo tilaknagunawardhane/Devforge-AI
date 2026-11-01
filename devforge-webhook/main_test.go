@@ -25,9 +25,13 @@ func newTestApp(t *testing.T, cfg Config) *App {
 	if cfg.DedupWindow == 0 {
 		cfg.DedupWindow = time.Hour
 	}
+	if cfg.ProposalTTL == 0 {
+		cfg.ProposalTTL = time.Hour
+	}
 	cfg.OllamaRetries, cfg.OllamaTimeout = 1, time.Second
 	cfg.OllamaURL = "http://127.0.0.1:1" // unreachable: analysis falls back, which is fine for these tests
-	return &App{cfg: cfg, store: store, kube: func() (kubernetes.Interface, error) { return nil, io.EOF }}
+	return &App{cfg: cfg, store: store, kube: func() (kubernetes.Interface, error) { return nil, io.EOF },
+		verifyFor: 30 * time.Millisecond, verifyEvery: 5 * time.Millisecond}
 }
 
 func TestSiblingPrefix(t *testing.T) {

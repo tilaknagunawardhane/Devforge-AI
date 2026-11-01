@@ -20,8 +20,40 @@ type TimelineEntry struct {
 	Text string
 }
 
+// Finding is a structured fact read from pod status. Unlike the LLM's prose, findings are what the
+// remediation rules act on.
+type Finding struct {
+	Kind      string // "oom-killed" or "crash-loop"
+	Pod       string
+	Container string
+}
+
+const (
+	FindingOOM        = "oom-killed"
+	FindingCrashLoop  = "crash-loop"
+	crashLoopRestarts = 3 // restarts at which a pod counts as crash looping even if it is momentarily Running
+)
+
+// podFindings inspects container statuses for OOM kills and crash loops.
+func podFindings(p corev1.Pod) []Finding {
+	var out []Finding
+	for _, c := range p.Status.ContainerStatuses {
+		oom := (c.LastTerminationState.Terminated != nil && c.LastTerminationState.Terminated.Reason == "OOMKilled") ||
+			(c.State.Terminated != nil && c.State.Terminated.Reason == "OOMKilled")
+		if oom {
+			out = append(out, Finding{FindingOOM, p.Name, c.Name})
+		}
+		looping := (c.State.Waiting != nil && c.State.Waiting.Reason == "CrashLoopBackOff") || c.RestartCount >= crashLoopRestarts
+		if looping && !oom {
+			out = append(out, Finding{FindingCrashLoop, p.Name, c.Name})
+		}
+	}
+	return out
+}
+
 // Evidence is everything we could learn about an incident, rendered as text for the LLM.
 type Evidence struct {
+	Findings    []Finding // structured facts, used by the remediation rules
 	Subject     string
 	Namespace   string
 	Pods        []string // pods named by the alerts
@@ -136,6 +168,10 @@ func collectKubeEvidence(ctx context.Context, cs kubernetes.Interface, ev *Evide
 				label = "the alerting pod (still exists)"
 			}
 			ev.Siblings = append(ev.Siblings, fmt.Sprintf("%s [%s]: phase=%s restarts=%d", p.Name, label, p.Status.Phase, restarts))
+			for _, f := range podFindings(p) {
+				ev.Findings = append(ev.Findings, f)
+				ev.Siblings[len(ev.Siblings)-1] += " (" + f.Kind + ")"
+			}
 
 			// Logs of the alerting pod, or of one replacement as a stand-in.
 			if !logged && (p.Name == name || len(logParts) < 2) {

@@ -71,6 +71,9 @@ func OpenStore(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, err
 	}
+	if _, err := db.Exec(actionSchema); err != nil {
+		return nil, err
+	}
 	return &Store{db: db}, nil
 }
 

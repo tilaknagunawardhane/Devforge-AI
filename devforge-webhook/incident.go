@@ -30,6 +30,9 @@ type App struct {
 	store *Store
 	rag   *RAG // nil when Qdrant is not configured
 	kube  func() (kubernetes.Interface, error)
+
+	// how long and how often to watch a rollout after a restart / rollback
+	verifyFor, verifyEvery time.Duration
 }
 
 // groupKey identifies "the same incident". Alertmanager supplies one per notification group; if a
@@ -135,8 +138,9 @@ func (a *App) analyze(ctx context.Context, inc Incident, alerts []Alert) {
 		}
 	}
 
-	if cs, err := a.kube(); err != nil {
-		ev.Unavailable = append(ev.Unavailable, "Kubernetes API: "+err.Error())
+	cs, kerr := a.kube()
+	if kerr != nil {
+		ev.Unavailable = append(ev.Unavailable, "Kubernetes API: "+kerr.Error())
 	} else {
 		collectKubeEvidence(ctx, cs, &ev, a.cfg.LogTailLines, a.cfg.MaxEvidencePods)
 	}
@@ -153,6 +157,14 @@ func (a *App) analyze(ctx context.Context, inc Incident, alerts []Alert) {
 	slog.Info("evidence collected", "incident", inc.ID, "events", len(ev.Events), "siblings", len(ev.Siblings),
 		"has_logs", ev.Logs != "", "context_hits", len(ev.Context))
 
+	// Rules read the structured findings (never the LLM's prose) and may propose actions. They are only
+	// proposals: a person must approve each one. They are created BEFORE the slow LLM call, because they
+	// do not depend on it, so a slow or unavailable model never delays or blocks remediation.
+	var proposals []Action
+	if kerr == nil {
+		proposals = a.createProposals(inc, a.proposeActions(ctx, cs, inc, ev))
+	}
+
 	report, err := askOllama(ctx, a.cfg, buildPrompt(ev))
 	if err != nil {
 		slog.Error("RCA generation failed, sending fallback", "incident", inc.ID, "error", err.Error())
@@ -165,7 +177,7 @@ func (a *App) analyze(ctx context.Context, inc Incident, alerts []Alert) {
 	if err != nil {
 		latest = &inc
 	}
-	a.postSlack(*latest, report)
+	a.postSlack(*latest, report, proposals)
 	// The RCA is only added to the retrieval index once a human acknowledges it (see slackActions),
 	// so a poor model answer never becomes "knowledge" that later incidents are told to trust.
 }
