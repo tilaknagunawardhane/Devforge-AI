@@ -1,15 +1,17 @@
+# Alerts are grouped per alert name and namespace, so a wave of pod failures arrives as ONE
+# notification (and becomes one incident / one RCA) instead of one per pod.
 route:
   receiver: devforge-ai-webhook
-  group_by: ["alertname", "pod"]
-  group_wait: 2s
-  group_interval: 30s
-  repeat_interval: 10m
+  group_by: ["alertname", "namespace"]
+  group_wait: 10s        # wait this long to collect alerts that fire together
+  group_interval: 1m     # then batch new alerts joining an existing group
+  repeat_interval: 1h    # re-notify a still-firing group at most hourly
 
 receivers:
   - name: devforge-ai-webhook
     webhook_configs:
       - url: http://webhook:9090/alert
-        send_resolved: false
+        send_resolved: true   # lets the webhook mark the incident resolved
         http_config:
           authorization:
             type: Bearer

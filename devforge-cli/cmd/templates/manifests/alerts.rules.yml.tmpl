@@ -28,3 +28,32 @@ groups:
           service: [[.Name]]
         annotations:
           summary: "[[.Name]] pod {{ $labels.pod }}: p95 latency above 500ms"
+  # Service level objective: [[.SLO]]% of requests succeed (error budget [[.Budget]]).
+  # Multiwindow burn-rate alerts from the Google SRE workbook: page when the budget would be gone in
+  # about 2 days (14.4x burn over 1h and 5m), ticket when it would be gone in about 5 days (6x over 6h and 30m).
+  - name: [[.Name]]-slo
+    rules:
+      - record: job:http_error_ratio:rate5m
+        expr: sum by (job) (rate(http_requests_total{job="[[.Name]]", status=~"5.."}[5m])) / sum by (job) (rate(http_requests_total{job="[[.Name]]"}[5m]))
+      - record: job:http_error_ratio:rate30m
+        expr: sum by (job) (rate(http_requests_total{job="[[.Name]]", status=~"5.."}[30m])) / sum by (job) (rate(http_requests_total{job="[[.Name]]"}[30m]))
+      - record: job:http_error_ratio:rate1h
+        expr: sum by (job) (rate(http_requests_total{job="[[.Name]]", status=~"5.."}[1h])) / sum by (job) (rate(http_requests_total{job="[[.Name]]"}[1h]))
+      - record: job:http_error_ratio:rate6h
+        expr: sum by (job) (rate(http_requests_total{job="[[.Name]]", status=~"5.."}[6h])) / sum by (job) (rate(http_requests_total{job="[[.Name]]"}[6h]))
+      - alert: [[.AlertPrefix]]ErrorBudgetFastBurn
+        expr: job:http_error_ratio:rate1h{job="[[.Name]]"} > [[.FastBurn]] and job:http_error_ratio:rate5m{job="[[.Name]]"} > [[.FastBurn]]
+        for: 2m
+        labels:
+          severity: critical
+          service: [[.Name]]
+        annotations:
+          summary: "[[.Name]] is burning its [[.SLO]]% error budget 14.4x too fast (page)"
+      - alert: [[.AlertPrefix]]ErrorBudgetSlowBurn
+        expr: job:http_error_ratio:rate6h{job="[[.Name]]"} > [[.SlowBurn]] and job:http_error_ratio:rate30m{job="[[.Name]]"} > [[.SlowBurn]]
+        for: 15m
+        labels:
+          severity: warning
+          service: [[.Name]]
+        annotations:
+          summary: "[[.Name]] is burning its [[.SLO]]% error budget 6x too fast (ticket)"

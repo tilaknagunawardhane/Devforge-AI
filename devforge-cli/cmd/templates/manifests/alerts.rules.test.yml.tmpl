@@ -1,0 +1,46 @@
+# Unit tests for alerts.rules.yml. Run: promtool test rules alerts.rules.test.yml
+# (or: docker run --rm -v "$PWD:/m" --entrypoint promtool prom/prometheus:v2.54.1 test rules /m/alerts.rules.test.yml)
+rule_files:
+  - alerts.rules.yml
+evaluation_interval: 1m
+tests:
+  # Traffic of 1000 requests/min with [[.ErrPerMin]] failing: well above the burn-rate thresholds.
+  - interval: 1m
+    input_series:
+      - series: 'http_requests_total{job="[[.Name]]", status="200"}'
+        values: '0+[[.OkPerMin]]x180'
+      - series: 'http_requests_total{job="[[.Name]]", status="500"}'
+        values: '0+[[.ErrPerMin]]x180'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: [[.AlertPrefix]]ErrorBudgetFastBurn
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: [[.Name]]
+              job: [[.Name]]
+            exp_annotations:
+              summary: "[[.Name]] is burning its [[.SLO]]% error budget 14.4x too fast (page)"
+      - eval_time: 90m
+        alertname: [[.AlertPrefix]]ErrorBudgetSlowBurn
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: [[.Name]]
+              job: [[.Name]]
+            exp_annotations:
+              summary: "[[.Name]] is burning its [[.SLO]]% error budget 6x too fast (ticket)"
+  # A healthy service must stay quiet.
+  - interval: 1m
+    input_series:
+      - series: 'http_requests_total{job="[[.Name]]", status="200"}'
+        values: '0+1000x180'
+      - series: 'http_requests_total{job="[[.Name]]", status="500"}'
+        values: '0+0x180'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: [[.AlertPrefix]]ErrorBudgetFastBurn
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: [[.AlertPrefix]]ErrorBudgetSlowBurn
+        exp_alerts: []

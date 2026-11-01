@@ -19,6 +19,7 @@ var (
 	dryRun      bool
 	planOnly    bool
 	useAI       bool
+	slo         float64
 )
 
 // writeFiles writes a map of relative path -> content under dir, creating folders as needed.
@@ -79,7 +80,11 @@ var createCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		data := newScaffoldData(projectName, lang, database)
+		data, err := newScaffoldData(projectName, lang, database).WithSLO(slo)
+		if err != nil {
+			fmt.Println("❌ Error:", err)
+			os.Exit(1)
+		}
 		scaffold, err := buildScaffold(data)
 		if err != nil {
 			fmt.Println("❌ Error:", err)
@@ -167,6 +172,7 @@ func init() {
 	createCmd.Flags().StringVarP(&projectName, "name", "n", "my-service", "Name of the microservice")
 	createCmd.Flags().StringVarP(&language, "lang", "l", "go", "Language template: go, python (FastAPI) or node")
 	createCmd.Flags().StringVarP(&database, "db", "d", "postgres", "Database type (e.g., postgres, redis)")
+	createCmd.Flags().Float64Var(&slo, "slo", DefaultSLO, "Availability target in percent; generates error-budget burn-rate alerts (90 to 99.999)")
 	createCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be created without writing anything")
 	createCmd.Flags().BoolVar(&planOnly, "plan", false, "Alias for --dry-run")
 	createCmd.Flags().BoolVar(&useAI, "ai", false, "Also generate a README with the local Ollama model (OLLAMA_URL, OLLAMA_MODEL)")

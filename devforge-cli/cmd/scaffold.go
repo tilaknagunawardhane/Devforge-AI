@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 )
@@ -22,6 +24,14 @@ type ScaffoldData struct {
 	Database    string
 	Port        int
 	Env         string // only set while rendering per-environment files
+
+	// SLO settings, derived by WithSLO. Strings are pre-formatted for the rule templates.
+	SLO       string // availability target in percent, e.g. "99.9"
+	Budget    string // error budget as a ratio, e.g. "0.001"
+	FastBurn  string // 14.4 x budget: page threshold
+	SlowBurn  string // 6 x budget: ticket threshold
+	ErrPerMin int    // failing requests per 1000 in the generated promtool test
+	OkPerMin  int
 }
 
 // Scaffold is the rendered output: app files go in the app repo, manifests in the manifest repo.
@@ -69,6 +79,7 @@ var (
 		"templates/manifests/servicemonitor.yaml.tmpl":     "base/servicemonitor.yaml",
 		"templates/kustomize/base-kustomization.yaml.tmpl": "base/kustomization.yaml",
 		"templates/manifests/alerts.rules.yml.tmpl":        "monitoring/alerts.rules.yml",
+		"templates/manifests/alerts.rules.test.yml.tmpl":   "monitoring/alerts.rules.test.yml",
 		"templates/manifests/grafana-dashboard.json.tmpl":  "monitoring/grafana-dashboard.json",
 	}
 	overlayTemplates = map[string]string{ // env -> template
@@ -110,8 +121,31 @@ func camelCase(name string) string {
 	return b.String()
 }
 
+// DefaultSLO is the availability target (percent) used when --slo is not given.
+const DefaultSLO = 99.9
+
 func newScaffoldData(name, language, database string) ScaffoldData {
-	return ScaffoldData{Name: name, AlertPrefix: camelCase(name), Language: language, Database: database, Port: 8080}
+	d := ScaffoldData{Name: name, AlertPrefix: camelCase(name), Language: language, Database: database, Port: 8080}
+	d, _ = d.WithSLO(DefaultSLO)
+	return d
+}
+
+func fmtNum(v float64) string { return strconv.FormatFloat(v, 'g', 6, 64) }
+
+// WithSLO fills the SLO fields for an availability target in percent (90 to 99.999).
+func (d ScaffoldData) WithSLO(slo float64) (ScaffoldData, error) {
+	if slo < 90 || slo >= 100 {
+		return d, fmt.Errorf("invalid SLO %v: use a percentage from 90 to 99.999", slo)
+	}
+	budget := (100 - slo) / 100
+	fast := 14.4 * budget
+	// The promtool test sends 1000 requests/min; fail twice the page threshold (at least 1, at most all).
+	errs := int(math.Ceil(fast * 2 * 1000))
+	errs = min(max(errs, 1), 1000)
+	d.SLO, d.Budget = fmtNum(slo), fmtNum(budget)
+	d.FastBurn, d.SlowBurn = fmtNum(fast), fmtNum(6*budget)
+	d.ErrPerMin, d.OkPerMin = errs, 1000-errs
+	return d, nil
 }
 
 func renderTemplate(src string, data ScaffoldData) (string, error) {

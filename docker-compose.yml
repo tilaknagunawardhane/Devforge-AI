@@ -25,7 +25,8 @@ services:
         condition: service_healthy
     environment:
       OLLAMA_HOST: ollama:11434
-    entrypoint: ["/bin/sh", "-c", "ollama pull ${OLLAMA_MODEL:-llama3}"]
+    # Chat model for RCAs + embedding model for runbook search
+    entrypoint: ["/bin/sh", "-c", "ollama pull ${OLLAMA_MODEL:-llama3} && ollama pull ${EMBED_MODEL:-nomic-embed-text}"]
     restart: "no"
 
   webhook:
@@ -34,6 +35,12 @@ services:
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3}
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}   # set to enable Acknowledge / Restart buttons
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:9090}
+      DB_PATH: /data/incidents.db
+      QDRANT_URL: http://qdrant:6333
+      EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
+      RUNBOOK_DIR: /runbooks
       WEBHOOK_TOKEN_FILE: /run/secrets/webhook-token
       PROMETHEUS_URL: http://prometheus:9090
       KUBECONFIG: /kube/kubeconfig.yaml # only exists when the k8s profile is running
@@ -41,16 +48,26 @@ services:
     volumes:
       - ./monitoring/webhook-token:/run/secrets/webhook-token:ro
       - kubeconfig:/kube:ro
+      - webhook-data:/data
+      - ./runbooks:/runbooks:ro
     ports:
       - "9090:9090"
     depends_on:
       ollama-pull:
         condition: service_completed_successfully
+      qdrant:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9090/healthz"]
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # Vector database for runbook / past-incident retrieval (free and open source)
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    volumes:
+      - qdrant-data:/qdrant/storage
 
   prometheus:
     image: prom/prometheus:v2.54.1
@@ -145,6 +162,8 @@ services:
     restart: on-failure
 
 volumes:
+  qdrant-data:
+  webhook-data:
   ollama-data:
   grafana-data:
   kubeconfig:

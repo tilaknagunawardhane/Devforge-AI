@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,15 +15,24 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+type TimelineEntry struct {
+	At   time.Time
+	Text string
+}
+
 // Evidence is everything we could learn about an incident, rendered as text for the LLM.
 type Evidence struct {
-	Pod         string
+	Subject     string
 	Namespace   string
+	Pods        []string // pods named by the alerts
+	Alerts      []string // alert names in the group
 	Events      []string
 	Siblings    []string
 	Logs        string
 	PromStats   string
-	Unavailable []string // human-readable notes about data we could not collect
+	Context     []Hit           // runbook sections and similar past incidents
+	Timeline    []TimelineEntry // alerts, Kubernetes events; rendered in time order
+	Unavailable []string        // human-readable notes about data we could not collect
 }
 
 // siblingPrefix turns "demo-app-5877c4b47d-vvp5m" into "demo-app-5877c4b47d",
@@ -54,52 +64,90 @@ func newKubeClient(cfg Config) (kubernetes.Interface, error) {
 	return kubernetes.NewForConfig(rc)
 }
 
-// collectKubeEvidence gathers events for the pod, plus status and recent logs of the
-// pod itself (if it still exists) and of its replacement pods.
-func collectKubeEvidence(ctx context.Context, cs kubernetes.Interface, ev *Evidence, tail int64) {
-	events, err := cs.CoreV1().Events(ev.Namespace).List(ctx, metav1.ListOptions{
-		FieldSelector: "involvedObject.name=" + ev.Pod,
-	})
-	if err != nil {
-		ev.Unavailable = append(ev.Unavailable, "events: "+err.Error())
-	} else {
+func eventTime(e corev1.Event) time.Time {
+	switch {
+	case !e.LastTimestamp.IsZero():
+		return e.LastTimestamp.Time
+	case !e.EventTime.IsZero():
+		return e.EventTime.Time
+	}
+	return e.CreationTimestamp.Time
+}
+
+// renderTimeline lists entries oldest first, as "15:04:05 text" lines.
+func renderTimeline(entries []TimelineEntry) []string {
+	sorted := append([]TimelineEntry{}, entries...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].At.Before(sorted[j].At) })
+	out := make([]string, 0, len(sorted))
+	for _, e := range sorted {
+		out = append(out, e.At.UTC().Format("15:04:05")+" "+e.Text)
+	}
+	return out
+}
+
+// collectKubeEvidence gathers events for the alerting pods (up to maxPods), plus status and recent
+// logs of the pods in their ReplicaSets, which stand in for the alerting pod if it was deleted.
+func collectKubeEvidence(ctx context.Context, cs kubernetes.Interface, ev *Evidence, tail int64, maxPods int) {
+	pods := ev.Pods
+	if maxPods > 0 && len(pods) > maxPods {
+		pods = pods[:maxPods]
+	}
+	for _, name := range pods {
+		events, err := cs.CoreV1().Events(ev.Namespace).List(ctx, metav1.ListOptions{FieldSelector: "involvedObject.name=" + name})
+		if err != nil {
+			ev.Unavailable = append(ev.Unavailable, "events: "+err.Error())
+			continue
+		}
 		for _, e := range events.Items {
-			ev.Events = append(ev.Events, fmt.Sprintf("%s %s: %s", e.Type, e.Reason, e.Message))
+			line := fmt.Sprintf("%s %s: %s", e.Type, e.Reason, e.Message)
+			if len(pods) > 1 {
+				line = name + " - " + line
+			}
+			ev.Events = append(ev.Events, line)
+			ev.Timeline = append(ev.Timeline, TimelineEntry{eventTime(e), fmt.Sprintf("%s %s (%s)", name, e.Reason, trim(e.Message, 80))})
 		}
 	}
 
-	pods, err := cs.CoreV1().Pods(ev.Namespace).List(ctx, metav1.ListOptions{})
+	all, err := cs.CoreV1().Pods(ev.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		ev.Unavailable = append(ev.Unavailable, "pod list: "+err.Error())
 		return
 	}
-	prefix := siblingPrefix(ev.Pod)
+	prefixes := map[string]bool{}
 	var logParts []string
-	found := false
-	for _, p := range pods.Items {
-		if !strings.HasPrefix(p.Name, prefix) {
+	for _, name := range pods {
+		prefix := siblingPrefix(name)
+		if prefixes[prefix] {
 			continue
 		}
-		found = true
-		restarts := int32(0)
-		for _, c := range p.Status.ContainerStatuses {
-			restarts += c.RestartCount
-		}
-		label := "sibling"
-		if p.Name == ev.Pod {
-			label = "the alerting pod (still exists)"
-		}
-		ev.Siblings = append(ev.Siblings, fmt.Sprintf("%s [%s]: phase=%s restarts=%d", p.Name, label, p.Status.Phase, restarts))
+		prefixes[prefix] = true
+		found, logged := false, false
+		for _, p := range all.Items {
+			if !strings.HasPrefix(p.Name, prefix) {
+				continue
+			}
+			found = true
+			restarts := int32(0)
+			for _, c := range p.Status.ContainerStatuses {
+				restarts += c.RestartCount
+			}
+			label := "sibling"
+			if p.Name == name {
+				label = "the alerting pod (still exists)"
+			}
+			ev.Siblings = append(ev.Siblings, fmt.Sprintf("%s [%s]: phase=%s restarts=%d", p.Name, label, p.Status.Phase, restarts))
 
-		// Fetch logs for the alerting pod, or for one replacement as a stand-in.
-		if p.Name == ev.Pod || len(logParts) == 0 {
-			if l := podLogs(ctx, cs, p, tail); l != "" {
-				logParts = append(logParts, fmt.Sprintf("--- logs of %s ---\n%s", p.Name, l))
+			// Logs of the alerting pod, or of one replacement as a stand-in.
+			if !logged && (p.Name == name || len(logParts) < 2) {
+				if l := podLogs(ctx, cs, p, tail); l != "" {
+					logParts = append(logParts, fmt.Sprintf("--- logs of %s ---\n%s", p.Name, l))
+					logged = true
+				}
 			}
 		}
-	}
-	if !found {
-		ev.Unavailable = append(ev.Unavailable, "no pods with prefix "+prefix+" found")
+		if !found {
+			ev.Unavailable = append(ev.Unavailable, "no pods with prefix "+prefix+" found")
+		}
 	}
 	ev.Logs = strings.Join(logParts, "\n")
 	if ev.Logs == "" {

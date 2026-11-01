@@ -167,3 +167,47 @@ func TestBuildScaffoldUnknownLanguage(t *testing.T) {
 		t.Error("expected an error for an unknown language")
 	}
 }
+
+func TestWithSLO(t *testing.T) {
+	d, err := newScaffoldData("svc", "go", "redis").WithSLO(99.9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.SLO != "99.9" || d.Budget != "0.001" || d.FastBurn != "0.0144" || d.SlowBurn != "0.006" {
+		t.Errorf("99.9%% SLO: %+v", d)
+	}
+	if d.ErrPerMin != 29 || d.OkPerMin != 971 {
+		t.Errorf("test traffic = %d/%d, want 29 failing of 1000", d.ErrPerMin, d.OkPerMin)
+	}
+	loose, _ := newScaffoldData("svc", "go", "redis").WithSLO(95)
+	if loose.ErrPerMin != 1000 || loose.OkPerMin != 0 {
+		t.Errorf("a 95%% SLO needs every request failing to burn fast, got %d/%d", loose.ErrPerMin, loose.OkPerMin)
+	}
+	for _, bad := range []float64{89.9, 100, 0, -1} {
+		if _, err := newScaffoldData("svc", "go", "redis").WithSLO(bad); err == nil {
+			t.Errorf("SLO %v should be rejected", bad)
+		}
+	}
+}
+
+func TestSLORulesGenerated(t *testing.T) {
+	data, _ := newScaffoldData("billing-service", "go", "postgres").WithSLO(99.5)
+	s, err := buildScaffold(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := s.Manifests["monitoring/alerts.rules.yml"]
+	for _, want := range []string{"job:http_error_ratio:rate5m", "job:http_error_ratio:rate6h", "BillingServiceErrorBudgetFastBurn",
+		"BillingServiceErrorBudgetSlowBurn", "> 0.072", "> 0.03", "99.5% error budget"} {
+		if !strings.Contains(rules, want) {
+			t.Errorf("alerts.rules.yml should contain %q", want)
+		}
+	}
+	// The same rules are wrapped for the Prometheus Operator, and a promtool test ships alongside.
+	if !strings.Contains(s.Manifests["base/prometheusrule.yaml"], "ErrorBudgetFastBurn") {
+		t.Error("PrometheusRule should include the SLO alerts")
+	}
+	if test := s.Manifests["monitoring/alerts.rules.test.yml"]; !strings.Contains(test, "alertname: BillingServiceErrorBudgetFastBurn") {
+		t.Error("promtool test missing")
+	}
+}
