@@ -25,6 +25,12 @@ type ScaffoldData struct {
 	Port        int
 	Env         string // only set while rendering per-environment files
 
+	// Platform settings.
+	Owner           string // team that owns the service, for the Backstage catalog entry
+	GitHubUser      string // used in repo slugs and URLs
+	ManifestRepoURL string // where Argo CD pulls the manifests from
+	Operator        bool   // include the Prometheus Operator resources (ServiceMonitor, PrometheusRule)
+
 	// SLO settings, derived by WithSLO. Strings are pre-formatted for the rule templates.
 	SLO       string // availability target in percent, e.g. "99.9"
 	Budget    string // error budget as a ratio, e.g. "0.001"
@@ -67,7 +73,8 @@ var (
 		},
 	}
 	ciTemplates = map[string]string{
-		"templates/ci/ci.yml.tmpl": ".github/workflows/ci.yml",
+		"templates/ci/ci.yml.tmpl":                   ".github/workflows/ci.yml",
+		"templates/backstage/catalog-info.yaml.tmpl": "catalog-info.yaml",
 	}
 	// Kustomize layout: base/ is shared, overlays/<env>/ customises it. monitoring/ holds
 	// files that are not part of the kustomization (dashboards and plain Prometheus rules).
@@ -76,7 +83,8 @@ var (
 		"templates/manifests/service.yaml.tmpl":            "base/service.yaml",
 		"templates/manifests/hpa.yaml.tmpl":                "base/hpa.yaml",
 		"templates/manifests/pdb.yaml.tmpl":                "base/pdb.yaml",
-		"templates/manifests/servicemonitor.yaml.tmpl":     "base/servicemonitor.yaml",
+		"templates/manifests/servicemonitor.yaml.tmpl":     "components/prometheus-operator/servicemonitor.yaml",
+		"templates/kustomize/component-operator.yaml.tmpl": "components/prometheus-operator/kustomization.yaml",
 		"templates/kustomize/base-kustomization.yaml.tmpl": "base/kustomization.yaml",
 		"templates/manifests/alerts.rules.yml.tmpl":        "monitoring/alerts.rules.yml",
 		"templates/manifests/alerts.rules.test.yml.tmpl":   "monitoring/alerts.rules.test.yml",
@@ -127,6 +135,17 @@ const DefaultSLO = 99.9
 func newScaffoldData(name, language, database string) ScaffoldData {
 	d := ScaffoldData{Name: name, AlertPrefix: camelCase(name), Language: language, Database: database, Port: 8080}
 	d, _ = d.WithSLO(DefaultSLO)
+	return d.WithPlatform("platform-team", "YOUR_GITHUB_USER", "", false)
+}
+
+// WithPlatform sets the owner, GitHub account and Argo CD source. An empty manifestRepoURL
+// becomes https://github.com/<user>/devforge-manifests-<name>.git, the repo the CLI creates.
+func (d ScaffoldData) WithPlatform(owner, githubUser, manifestRepoURL string, operator bool) ScaffoldData {
+	d.Owner, d.GitHubUser, d.Operator = owner, githubUser, operator
+	if manifestRepoURL == "" {
+		manifestRepoURL = fmt.Sprintf("https://github.com/%s/devforge-manifests-%s.git", githubUser, d.Name)
+	}
+	d.ManifestRepoURL = manifestRepoURL
 	return d
 }
 
@@ -153,6 +172,8 @@ func renderTemplate(src string, data ScaffoldData) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// A Windows checkout (git autocrlf) turns the templates into CRLF; generated files must not depend on that.
+	raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
 	t, err := template.New(src).Delims("[[", "]]").Option("missingkey=error").Parse(string(raw))
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", src, err)
@@ -211,7 +232,7 @@ func buildScaffold(data ScaffoldData) (*Scaffold, error) {
 	if s.Manifests, err = renderSet(manifestTemplates, data); err != nil {
 		return nil, err
 	}
-	s.Manifests["base/prometheusrule.yaml"] = prometheusRuleManifest(data.Name, s.Manifests["monitoring/alerts.rules.yml"])
+	s.Manifests["components/prometheus-operator/prometheusrule.yaml"] = prometheusRuleManifest(data.Name, s.Manifests["monitoring/alerts.rules.yml"])
 
 	for env, src := range overlayTemplates {
 		envData := data
@@ -226,6 +247,11 @@ func buildScaffold(data ScaffoldData) (*Scaffold, error) {
 		}
 		s.Manifests["overlays/"+env+"/kustomization.yaml"] = kustomization
 		s.Manifests["overlays/"+env+"/namespace.yaml"] = namespace
+		app, err := renderTemplate("templates/argocd/application.yaml.tmpl", envData)
+		if err != nil {
+			return nil, err
+		}
+		s.Manifests["argocd/application-"+env+".yaml"] = app
 	}
 	return s, nil
 }

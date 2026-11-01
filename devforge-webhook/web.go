@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -75,4 +76,39 @@ func (a *App) auditPage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	pageTemplates.ExecuteTemplate(w, "auditpage", trail)
+}
+
+type incidentJSON struct {
+	ID             int64    `json:"id"`
+	Subject        string   `json:"subject"`
+	Namespace      string   `json:"namespace"`
+	Status         string   `json:"status"`
+	AlertCount     int      `json:"alertCount"`
+	Pods           []string `json:"pods"`
+	PendingActions int      `json:"pendingActions"`
+	CreatedAt      string   `json:"createdAt"`
+	URL            string   `json:"url"`
+}
+
+// incidentsJSON is a read-only feed for the portal (`devforge ui`). It omits the RCA text on purpose:
+// the list stays small and the full analysis is one click away on the incident page.
+func (a *App) incidentsJSON(w http.ResponseWriter, r *http.Request) {
+	list, err := a.store.List(50)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	pending, _ := a.store.PendingActions()
+	out := make([]incidentJSON, 0, len(list))
+	for _, i := range list {
+		pods := i.PodList()
+		if pods == nil {
+			pods = []string{}
+		}
+		out = append(out, incidentJSON{ID: i.ID, Subject: i.Subject, Namespace: i.Namespace, Status: i.Status,
+			AlertCount: i.AlertCount, Pods: pods, PendingActions: pending[i.ID],
+			CreatedAt: i.CreatedAt.Format("2006-01-02T15:04:05Z"), URL: a.cfg.PublicURL + "/incidents/" + strconv.FormatInt(i.ID, 10)})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
 }

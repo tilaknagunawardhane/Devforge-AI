@@ -20,6 +20,9 @@ var (
 	planOnly    bool
 	useAI       bool
 	slo         float64
+	owner       string
+	manifestURL string
+	operator    bool
 )
 
 // writeFiles writes a map of relative path -> content under dir, creating folders as needed.
@@ -85,6 +88,8 @@ var createCmd = &cobra.Command{
 			fmt.Println("❌ Error:", err)
 			os.Exit(1)
 		}
+		ghUser := envOr("GITHUB_USERNAME", "YOUR_GITHUB_USER")
+		data = data.WithPlatform(owner, ghUser, manifestURL, operator)
 		scaffold, err := buildScaffold(data)
 		if err != nil {
 			fmt.Println("❌ Error:", err)
@@ -173,6 +178,9 @@ func init() {
 	createCmd.Flags().StringVarP(&language, "lang", "l", "go", "Language template: go, python (FastAPI) or node")
 	createCmd.Flags().StringVarP(&database, "db", "d", "postgres", "Database type (e.g., postgres, redis)")
 	createCmd.Flags().Float64Var(&slo, "slo", DefaultSLO, "Availability target in percent; generates error-budget burn-rate alerts (90 to 99.999)")
+	createCmd.Flags().StringVar(&owner, "owner", "platform-team", "Team that owns the service (Backstage catalog-info.yaml)")
+	createCmd.Flags().StringVar(&manifestURL, "manifest-repo-url", "", "Git URL Argo CD pulls manifests from (default: the devforge-manifests-<name> repo on GitHub)")
+	createCmd.Flags().BoolVar(&operator, "prometheus-operator", false, "Also generate ServiceMonitor and PrometheusRule resources (needs the Prometheus Operator CRDs in the cluster)")
 	createCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be created without writing anything")
 	createCmd.Flags().BoolVar(&planOnly, "plan", false, "Alias for --dry-run")
 	createCmd.Flags().BoolVar(&useAI, "ai", false, "Also generate a README with the local Ollama model (OLLAMA_URL, OLLAMA_MODEL)")

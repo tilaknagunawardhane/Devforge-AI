@@ -48,7 +48,8 @@ func TestBuildScaffoldAllLanguages(t *testing.T) {
 	}
 	wantManifests := []string{
 		"base/deployment.yaml", "base/service.yaml", "base/hpa.yaml", "base/pdb.yaml",
-		"base/servicemonitor.yaml", "base/prometheusrule.yaml", "base/kustomization.yaml",
+		"components/prometheus-operator/servicemonitor.yaml", "components/prometheus-operator/prometheusrule.yaml", "components/prometheus-operator/kustomization.yaml",
+		"base/kustomization.yaml", "argocd/application-dev.yaml", "argocd/application-staging.yaml",
 		"overlays/dev/kustomization.yaml", "overlays/dev/namespace.yaml",
 		"overlays/staging/kustomization.yaml", "overlays/staging/namespace.yaml",
 		"monitoring/alerts.rules.yml", "monitoring/grafana-dashboard.json",
@@ -111,14 +112,15 @@ func TestManifestContents(t *testing.T) {
 		t.Fatal(err)
 	}
 	checks := map[string][]string{
-		"base/deployment.yaml":                {"readOnlyRootFilesystem: true", "runAsNonRoot: true", "path: /health", "path: /ready", "prometheus.io/scrape", "limits:"},
-		"base/prometheusrule.yaml":            {"kind: PrometheusRule", "BillingServiceDown", "BillingServiceHighErrorRate", "{{ $labels.pod }}"},
-		"base/servicemonitor.yaml":            {"kind: ServiceMonitor", "path: /metrics"},
-		"base/kustomization.yaml":             {"deployment.yaml", "prometheusrule.yaml"},
-		"overlays/dev/kustomization.yaml":     {"namespace: billing-service-dev", "../../base", "$patch: delete", "environment: dev"},
-		"overlays/staging/kustomization.yaml": {"namespace: billing-service-staging", "../../base", "environment: staging"},
-		"overlays/dev/namespace.yaml":         {"name: billing-service-dev"},
-		"monitoring/grafana-dashboard.json":   {`"uid": "billing-service-overview"`, "{{route}}"},
+		"base/deployment.yaml":                               {"readOnlyRootFilesystem: true", "runAsNonRoot: true", "path: /health", "path: /ready", "prometheus.io/scrape", "limits:"},
+		"components/prometheus-operator/prometheusrule.yaml": {"kind: PrometheusRule", "BillingServiceDown", "BillingServiceHighErrorRate", "{{ $labels.pod }}"},
+		"components/prometheus-operator/servicemonitor.yaml": {"kind: ServiceMonitor", "path: /metrics"},
+		"components/prometheus-operator/kustomization.yaml":  {"kind: Component", "servicemonitor.yaml", "prometheusrule.yaml"},
+		"base/kustomization.yaml":                            {"deployment.yaml", "service.yaml"},
+		"overlays/dev/kustomization.yaml":                    {"namespace: billing-service-dev", "../../base", "$patch: delete", "environment: dev"},
+		"overlays/staging/kustomization.yaml":                {"namespace: billing-service-staging", "../../base", "environment: staging"},
+		"overlays/dev/namespace.yaml":                        {"name: billing-service-dev"},
+		"monitoring/grafana-dashboard.json":                  {`"uid": "billing-service-overview"`, "{{route}}"},
 	}
 	for file, wants := range checks {
 		content, ok := s.Manifests[file]
@@ -204,10 +206,86 @@ func TestSLORulesGenerated(t *testing.T) {
 		}
 	}
 	// The same rules are wrapped for the Prometheus Operator, and a promtool test ships alongside.
-	if !strings.Contains(s.Manifests["base/prometheusrule.yaml"], "ErrorBudgetFastBurn") {
+	if !strings.Contains(s.Manifests["components/prometheus-operator/prometheusrule.yaml"], "ErrorBudgetFastBurn") {
 		t.Error("PrometheusRule should include the SLO alerts")
 	}
 	if test := s.Manifests["monitoring/alerts.rules.test.yml"]; !strings.Contains(test, "alertname: BillingServiceErrorBudgetFastBurn") {
 		t.Error("promtool test missing")
+	}
+}
+
+// base/ must apply on any cluster, so it may not contain kinds that need extra CRDs.
+func TestBaseNeedsNoCRDs(t *testing.T) {
+	for _, lang := range SupportedLanguages {
+		s, err := buildScaffold(newScaffoldData("svc", lang, "redis"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		base := s.Manifests["base/kustomization.yaml"]
+		for _, crd := range []string{"servicemonitor", "prometheusrule"} {
+			if strings.Contains(base, crd) {
+				t.Errorf("base/kustomization.yaml must not include %s", crd)
+			}
+		}
+		for _, env := range []string{"dev", "staging"} {
+			if o := s.Manifests["overlays/"+env+"/kustomization.yaml"]; strings.Contains(o, "prometheus-operator") {
+				t.Errorf("%s overlay includes the operator component without --prometheus-operator", env)
+			}
+		}
+	}
+}
+
+func TestPrometheusOperatorOptIn(t *testing.T) {
+	data := newScaffoldData("svc", "go", "redis").WithPlatform("team-a", "alice", "", true)
+	s, err := buildScaffold(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range []string{"dev", "staging"} {
+		o := s.Manifests["overlays/"+env+"/kustomization.yaml"]
+		if !strings.Contains(o, "components:\n  - ../../components/prometheus-operator") {
+			t.Errorf("%s overlay should include the component:\n%s", env, o)
+		}
+		if !strings.Contains(o, "namespace.yaml\ncomponents") {
+			t.Errorf("%s overlay layout unexpected:\n%s", env, o)
+		}
+	}
+}
+
+func TestArgoCDApplications(t *testing.T) {
+	data := newScaffoldData("billing-service", "go", "postgres").WithPlatform("team-a", "alice", "", false)
+	s, err := buildScaffold(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := s.Manifests["argocd/application-dev.yaml"]
+	for _, want := range []string{"kind: Application", "name: billing-service-dev", "namespace: argocd",
+		"repoURL: https://github.com/alice/devforge-manifests-billing-service.git", "path: overlays/dev",
+		"namespace: billing-service-dev", "prune: true", "selfHeal: true", "CreateNamespace=true"} {
+		if !strings.Contains(dev, want) {
+			t.Errorf("application-dev.yaml should contain %q", want)
+		}
+	}
+	if st := s.Manifests["argocd/application-staging.yaml"]; !strings.Contains(st, "path: overlays/staging") || !strings.Contains(st, "billing-service-staging") {
+		t.Errorf("staging application wrong:\n%s", st)
+	}
+
+	custom := newScaffoldData("svc", "go", "redis").WithPlatform("t", "alice", "http://gitea:3000/devforge/svc.git", false)
+	c, _ := buildScaffold(custom)
+	if !strings.Contains(c.Manifests["argocd/application-dev.yaml"], "repoURL: http://gitea:3000/devforge/svc.git") {
+		t.Error("--manifest-repo-url must override the default")
+	}
+}
+
+func TestBackstageCatalogInfo(t *testing.T) {
+	data := newScaffoldData("billing-service", "python", "postgres").WithPlatform("payments-team", "alice", "", false)
+	s, _ := buildScaffold(data)
+	info := s.App["catalog-info.yaml"]
+	for _, want := range []string{"apiVersion: backstage.io/v1alpha1", "kind: Component", "name: billing-service",
+		"github.com/project-slug: alice/devforge-app-billing-service", "argocd/app-name: billing-service-dev",
+		"type: service", "owner: payments-team", "- python"} {
+		if !strings.Contains(info, want) {
+			t.Errorf("catalog-info.yaml should contain %q:\n%s", want, info)
+		}
 	}
 }

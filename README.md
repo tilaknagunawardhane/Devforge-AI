@@ -52,7 +52,8 @@ With `make` installed you can use `make up`, `make chaos`, `make demo` (fake ale
 
 | Service | URL |
 |---------|-----|
-| Webhook | http://localhost:9090/healthz, incidents at http://localhost:9090/incidents |
+| Portal | http://localhost:8088 (services, live status, incidents) |
+| Webhook | http://localhost:9090/healthz, incidents at http://localhost:9090/incidents, audit log at /audit |
 | Prometheus | http://localhost:9091 |
 | Alertmanager | http://localhost:9093 |
 | Grafana | http://localhost:3000 (admin / `GRAFANA_PASSWORD`, default `admin`) |
@@ -77,6 +78,9 @@ docker run --rm -v "$PWD:/workspace" devforge-cli list
 | `--dry-run` / `--plan` | Show every file that would be created; write nothing |
 | `--ai` | Also write a README using your local Ollama (`OLLAMA_URL`, `OLLAMA_MODEL`) |
 | `--db` | Database name, passed to the app as a `DATABASE_URL` hint |
+| `--owner` | Owning team, written to the Backstage `catalog-info.yaml` (default `platform-team`) |
+| `--manifest-repo-url` | Git URL Argo CD pulls from (default: the `devforge-manifests-<name>` repo of `GITHUB_USERNAME`) |
+| `--prometheus-operator` | Also include `ServiceMonitor` / `PrometheusRule` (only for clusters that have the Prometheus Operator CRDs) |
 
 Set `GITHUB_USERNAME` and `GITHUB_TOKEN` to also create `devforge-app-<name>` and `devforge-manifests-<name>` repositories. Every service gets `/health`, `/ready`, `/metrics`, tests, an availability SLO with burn-rate alerts (`--slo`, default 99.9) and a `promtool` test for them, Kustomize `base/` + `overlays/dev|staging`, alert rules, a Grafana dashboard, and a CI pipeline (tests, gitleaks, Trivy). Created services are listed by `devforge list` from `.devforge/catalog.json`.
 
@@ -170,6 +174,24 @@ curl -X POST -H "Authorization: Bearer $(cat monitoring/webhook-token)" -H "X-Ac
 
 **Audit log.** `GET /audit` shows every proposal, approval, rejection, block, execution, dry-run and verification, with the actor. It lives in SQLite with triggers that make `UPDATE` and `DELETE` fail, and each entry is also written to the JSON log. The pages are read-only and not password protected.
 
+## GitOps with Argo CD, the portal and Backstage
+
+**Argo CD.** Every generated service includes `manifests/argocd/application-dev.yaml` and `application-staging.yaml`: Argo CD `Application`s that watch `overlays/dev` or `overlays/staging` of the manifest repository, with `prune` and `selfHeal` on. The CI pipeline commits the new image tag to that repository, and Argo CD rolls it out; manual `kubectl` changes are reverted.
+
+```bash
+make gitops-demo        # or: bash gitops/demo.sh
+```
+
+The demo starts k3s and a local Git server (Gitea), installs Argo CD's lightweight core install, generates a service with the CLI, builds and loads its image, pushes the manifests, and applies the Application. Then it commits a new image tag (watch the rollout), scales the Deployment by hand (watch Argo CD undo it), and prints the result. The first run downloads the Argo CD and Gitea images. The credentials it creates are for that throwaway local Git server only. For GitHub, apply `argocd/application-dev.yaml` to a cluster that runs Argo CD; the default `repoURL` points at `github.com/<GITHUB_USERNAME>/devforge-manifests-<name>.git`, and a private repository needs a repository credential in Argo CD.
+
+The core install has no API server, so the demo also creates the `default` project that the API server would normally create. A full Argo CD install does that itself.
+
+**Why a component for monitoring.** `ServiceMonitor` and `PrometheusRule` need Prometheus Operator CRDs, so they live in `components/prometheus-operator/` and the overlays include them only when the service was created with `--prometheus-operator`. Without the flag, `base/` and the overlays apply on any cluster (use `monitoring/alerts.rules.yml` with a plain Prometheus).
+
+**Portal.** `docker compose up -d portal` serves http://localhost:8088, or run `devforge ui`. It shows every service in the catalog with live status from Prometheus (`up{job="<name>"}`), links to the Grafana dashboard and repositories, and recent incidents with the number of actions waiting for approval. It is read-only. The catalog is `./.devforge/catalog.json`, written when you run the CLI from the repository root; if a data source is down, the page shows a note instead of failing. Settings: `DEVFORGE_WEBHOOK_URL`, `DEVFORGE_WEBHOOK_PUBLIC_URL`, `PROMETHEUS_URL`, `GRAFANA_URL`, `ARGOCD_URL`.
+
+**Backstage.** Each service gets a `catalog-info.yaml` (a Backstage `Component` with owner, GitHub slug, Argo CD app name and links). Register its URL in your Backstage instance. DevForge does not run Backstage.
+
 ---
 
 # Roadmap / Task list
@@ -249,10 +271,10 @@ All tools listed are **free and open source**. Tick items off as they are comple
 
 ## Phase 8 — GitOps & platform polish
 
-- [ ] **Argo CD** (free) deploys CLI-generated services from Git instead of `kubectl apply`
-- [ ] Simple web UI (or CLI TUI) over the service catalog and incidents
-- [ ] Optional Backstage-style catalog metadata (`catalog-info.yaml`) per service
-- [ ] Optional OpenCost (free) dashboard for per-service cost
+- [x] **Argo CD** (free) deploys CLI-generated services from Git instead of `kubectl apply` (proved on k3s with a local Gitea via `make gitops-demo`; not tried against GitHub)
+- [x] Simple web UI (or CLI TUI) over the service catalog and incidents (`devforge ui`, also the `portal` service on :8088)
+- [x] Optional Backstage-style catalog metadata (`catalog-info.yaml`) per service (generated and unit-tested; not loaded into a real Backstage)
+- [ ] Optional OpenCost (free) dashboard for per-service cost (not done: OpenCost needs node and pod resource metrics that the k3s-in-Docker demo does not expose, and I would not ship an install I could not run)
 
 ## Phase 9 — Quality, CI, and CV polish
 

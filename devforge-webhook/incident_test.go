@@ -2,6 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -198,5 +202,31 @@ func TestProposalsDoNotWaitForTheLLM(t *testing.T) {
 	acts, _ := app.store.ActionsForIncident(1)
 	if len(acts) != 1 || acts[0].Kind != KindRollback || acts[0].Status != ActionProposed {
 		t.Fatalf("want one proposed rollback even though the LLM failed, got %+v", acts)
+	}
+}
+
+func TestIncidentsJSONFeed(t *testing.T) {
+	app := remediationApp(t, cluster(time.Minute, true, nil), Config{PublicURL: "http://portal-test"})
+	inc := newIncident(t, app)
+	app.store.SetRCA(inc.ID, "secret analysis text")
+	proposeFor(t, app, inc, KindRollback)
+	srv := httptest.NewServer(app.mux())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/incidents.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var got []incidentJSON
+	if err := json.Unmarshal(raw, &got); err != nil || len(got) != 1 {
+		t.Fatalf("bad feed: %v %s", err, raw)
+	}
+	if got[0].PendingActions != 1 || got[0].URL != "http://portal-test/incidents/1" || got[0].Pods[0] != "web-v2-aaaaa" {
+		t.Errorf("unexpected entry: %+v", got[0])
+	}
+	if strings.Contains(string(raw), "secret analysis text") {
+		t.Error("the feed must not include RCA text")
 	}
 }

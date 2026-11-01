@@ -72,6 +72,25 @@ services:
       timeout: 3s
       retries: 10
 
+  # Web portal: service catalog + live status + incidents. Create services with the CLI from the
+  # repository root so `./.devforge/catalog.json` exists (see "Using the CLI" in the README).
+  portal:
+    build: ./devforge-cli
+    command: ["ui"]
+    environment:
+      DEVFORGE_CATALOG: /data/catalog.json
+      DEVFORGE_WEBHOOK_URL: http://webhook:9090
+      DEVFORGE_WEBHOOK_PUBLIC_URL: http://localhost:9090
+      PROMETHEUS_URL: http://prometheus:9090
+      GRAFANA_URL: http://localhost:3000
+      ARGOCD_URL: ${ARGOCD_URL:-}
+    volumes:
+      - ./.devforge:/data:ro
+    ports:
+      - "8088:8088"
+    depends_on:
+      - webhook
+
   # Vector database for runbook / past-incident retrieval (free and open source)
   qdrant:
     image: qdrant/qdrant:v1.12.4
@@ -110,6 +129,21 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
+
+  # ---------- profile "gitops": a local Git server so Argo CD can be tried without GitHub ----------
+  # Used by gitops/demo.sh. The credentials it creates are for this local demo only.
+  gitea:
+    profiles: ["gitops"]
+    image: gitea/gitea:1.22.6
+    environment:
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__service__DISABLE_REGISTRATION: "true"
+      GITEA__server__ROOT_URL: http://localhost:3001/
+    volumes:
+      - gitea-data:/data
+    ports:
+      - "3001:3000"
 
   # ---------- profile "k8s": a throwaway Kubernetes cluster to attack ----------
   k3s:
@@ -171,6 +205,7 @@ services:
     restart: on-failure
 
 volumes:
+  gitea-data:
   qdrant-data:
   webhook-data:
   ollama-data:

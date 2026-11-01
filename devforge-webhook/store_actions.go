@@ -213,3 +213,22 @@ func (s *Store) ListAudit(limit int, incidentID int64) ([]AuditEntry, error) {
 	}
 	return out, rows.Err()
 }
+
+// PendingActions counts proposals still waiting for a decision, per incident.
+func (s *Store) PendingActions() (map[int64]int, error) {
+	rows, err := s.db.Query(`SELECT incident_id, COUNT(*) FROM actions WHERE status = 'proposed' GROUP BY incident_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]int{}
+	for rows.Next() {
+		var id int64
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}

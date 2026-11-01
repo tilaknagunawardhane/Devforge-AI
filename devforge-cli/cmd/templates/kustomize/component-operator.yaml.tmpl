@@ -1,0 +1,7 @@
+# Optional: only works on clusters with the Prometheus Operator CRDs (kube-prometheus-stack).
+# Included by the overlays when the service was created with --prometheus-operator.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - servicemonitor.yaml
+  - prometheusrule.yaml

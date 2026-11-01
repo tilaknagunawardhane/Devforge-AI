@@ -5,6 +5,10 @@ namespace: [[.Name]]-staging
 resources:
   - ../../base
   - namespace.yaml
+[[- if .Operator]]
+components:
+  - ../../components/prometheus-operator
+[[- end]]
 labels:
   - pairs:
       environment: staging

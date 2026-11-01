@@ -27,3 +27,9 @@ venv/
 # Chaos reports (generated)
 reports/*
 !reports/.gitkeep
+
+# Service catalog written by the CLI
+.devforge/
+
+# GitOps demo scratch output
+gitops/out/

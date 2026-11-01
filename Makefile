@@ -1,4 +1,4 @@
-.PHONY: up chaos chaos-pause chaos-resume chaos-report down clean demo logs ps
+.PHONY: gitops-demo up chaos chaos-pause chaos-resume chaos-report down clean demo logs ps
 
 # Core stack: webhook, Ollama (pulls the model), Prometheus, Alertmanager, Grafana
 up:
@@ -24,6 +24,10 @@ chaos-resume:
 # Latest report is written to ./reports/chaos-report.md after every experiment
 chaos-report:
 	@cat reports/chaos-report.md
+
+# Argo CD + a local Git server: deploys a generated service and shows a Git commit roll out (needs only Docker)
+gitops-demo:
+	bash gitops/demo.sh
 
 logs:
 	docker compose --profile k8s logs -f webhook chaos

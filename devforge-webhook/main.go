@@ -48,6 +48,7 @@ func (a *App) mux() *http.ServeMux {
 	mux.HandleFunc("POST /actions/{id}/approve", requireToken(a.cfg.Token, a.actionDecision(true)))
 	mux.HandleFunc("POST /actions/{id}/reject", requireToken(a.cfg.Token, a.actionDecision(false)))
 	mux.HandleFunc("GET /audit", a.auditPage)
+	mux.HandleFunc("GET /api/incidents.json", a.incidentsJSON)
 	mux.HandleFunc("GET /incidents", a.incidentsPage)
 	mux.HandleFunc("GET /incidents/{id}", a.incidentPage)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })

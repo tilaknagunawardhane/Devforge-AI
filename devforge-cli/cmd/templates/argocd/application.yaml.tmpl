@@ -1,0 +1,24 @@
+# Argo CD Application: keeps the [[.Env]] environment in sync with overlays/[[.Env]] of this repository.
+# Apply once with: kubectl apply -n argocd -f argocd/application-[[.Env]].yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: [[.Name]]-[[.Env]]
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: [[.ManifestRepoURL]]
+    targetRevision: HEAD
+    path: overlays/[[.Env]]
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: [[.Name]]-[[.Env]]
+  syncPolicy:
+    automated:
+      prune: true      # delete resources that were removed from Git
+      selfHeal: true   # undo manual changes made with kubectl
+    syncOptions:
+      - CreateNamespace=true
