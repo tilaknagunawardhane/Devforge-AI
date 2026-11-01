@@ -40,7 +40,8 @@ func TestChunkMarkdown(t *testing.T) {
 	if chunks[1].ID == chunks[2].ID {
 		t.Error("chunk IDs must be unique")
 	}
-	if pointID(chunks[1].ID) != pointID(chunks[1].ID) || pointID("a") == pointID("b") {
+	first, again := pointID(chunks[1].ID), pointID(chunks[1].ID)
+	if first != again || pointID("a") == pointID("b") {
 		t.Error("pointID must be stable and distinct")
 	}
 }

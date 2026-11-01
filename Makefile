@@ -1,4 +1,4 @@
-.PHONY: gitops-demo up chaos chaos-pause chaos-resume chaos-report down clean demo logs ps
+.PHONY: test lint verify smoke e2e gitops-demo up chaos chaos-pause chaos-resume chaos-report down clean demo logs ps
 
 # Core stack: webhook, Ollama (pulls the model), Prometheus, Alertmanager, Grafana
 up:
@@ -24,6 +24,25 @@ chaos-resume:
 # Latest report is written to ./reports/chaos-report.md after every experiment
 chaos-report:
 	@cat reports/chaos-report.md
+
+# Same checks CI runs (each in a container; only Docker is needed)
+test:
+	bash scripts/test.sh
+
+lint:
+	bash scripts/lint.sh
+
+# Generate go/python/node services with the CLI and prove the output works
+verify:
+	bash scripts/verify-generated.sh
+
+# Bring the stack up and push a synthetic alert through it
+smoke:
+	bash scripts/smoke.sh
+
+# Chaos kills pods in a throwaway k3s cluster; follow the alert to an incident
+e2e:
+	bash scripts/e2e-chaos.sh
 
 # Argo CD + a local Git server: deploys a generated service and shows a Git commit roll out (needs only Docker)
 gitops-demo:

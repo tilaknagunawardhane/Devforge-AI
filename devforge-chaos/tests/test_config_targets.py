@@ -1,10 +1,10 @@
 import random
 
 import pytest
+from conftest import make_pod
 
 from config import Config, ConfigError, load_config
 from targets import baseline_ready, eligible_pods, is_healthy, pick_targets
-from conftest import make_pod
 
 
 def test_defaults_are_safe():

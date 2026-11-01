@@ -33,3 +33,7 @@ reports/*
 
 # GitOps demo scratch output
 gitops/out/
+
+# Test run leftovers
+test-logs.txt
+.verify-generated/

@@ -1,20 +1,34 @@
 # Augmented Internal Developer Platform (IDP)
 
-An internal developer platform that **builds** services in seconds and **heals** them when they break, using automation and a local AI model.
+[![CI](https://github.com/tilaknagunawardhane/Devforge-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/tilaknagunawardhane/Devforge-AI/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+![Go](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![Free and open source](https://img.shields.io/badge/stack-100%25%20free%20%26%20open%20source-brightgreen)
 
-- **Day-1 (Builder):** `devforge-cli` (Go) asks what you want, uses AI to generate starter code, produces Docker + Kubernetes files and a CI/CD pipeline, and pushes everything to GitHub.
-- **Day-2 (SRE & Healer):** `devforge-chaos` (Python) randomly deletes pods to prove the cluster self-heals. Prometheus/Alertmanager detect it and call `devforge-webhook` (Go), which asks a local Llama 3 model for a Root Cause Analysis (RCA) and posts it to Slack.
+An internal developer platform that **builds** services in seconds and **heals** them when they break, using automation and a local AI model. Everything runs in Docker with free, open-source tools.
+
+- **Day-1 (Builder):** `devforge-cli` (Go) renders tested templates for Go, Python or Node into a service with health checks, Prometheus metrics, tests, hardened Kustomize manifests (dev and staging), SLO burn-rate alerts, a Grafana dashboard, Argo CD applications and a CI pipeline (tests, gitleaks, Trivy), then pushes it to GitHub.
+- **Day-2 (SRE & Healer):** `devforge-chaos` (Python) injects faults (pod kill, CPU and memory stress, node drain) and measures recovery time. Prometheus and Alertmanager detect them; `devforge-webhook` (Go) groups the alerts into one incident, gathers Kubernetes evidence and runbook sections, asks a local Llama 3 model for a root-cause analysis, and posts it to Slack. Rules can *propose* a rollback or a fix pull request; a person approves; every step is audited.
+
+**New here?** Start with the [project guide](docs/project-guide.md): what everything is, how to run it, and what every file does. **Why it is built this way** is in [docs/design-decisions.md](docs/design-decisions.md): the choices, the bugs that taught me something, and what I would do next.
 
 ```mermaid
 flowchart LR
-    CLI[devforge-cli] -->|code, Dockerfile, K8s, CI| GH[GitHub repo]
-    CHAOS[devforge-chaos] -->|kills pods| K8S[Kubernetes]
+    CLI[devforge-cli] -->|service, manifests, CI| GIT[Git repos]
+    GIT -->|Argo CD sync| K8S[Kubernetes]
+    CHAOS[devforge-chaos] -->|faults| K8S
     K8S --> PROM[Prometheus]
     PROM --> AM[Alertmanager]
-    AM -->|alert JSON| WH[devforge-webhook]
-    WH -->|logs + prompt| LLM[Llama 3 via Ollama]
-    LLM -->|RCA| WH
-    WH -->|notification| SLACK[Slack]
+    AM -->|grouped alerts| WH[devforge-webhook]
+    WH -->|events, logs| K8S
+    WH -->|runbook search| QD[Qdrant]
+    WH -->|evidence prompt| LLM[Llama 3 via Ollama]
+    WH -->|RCA and approve buttons| SLACK[Slack]
+    SLACK -->|approve or reject| WH
+    WH -->|rollback, restart, fix PR| K8S
+    WH --- DB[(Incidents and audit log)]
+    PORTAL[Portal] -->|incidents feed| WH
 ```
 
 ## Design principles
@@ -192,6 +206,23 @@ The core install has no API server, so the demo also creates the `default` proje
 
 **Backstage.** Each service gets a `catalog-info.yaml` (a Backstage `Component` with owner, GitHub slug, Argo CD app name and links). Register its URL in your Backstage instance. DevForge does not run Backstage.
 
+## Testing and CI
+
+Everything runs in containers, so the only prerequisite is Docker. With `make` installed (or run the scripts directly):
+
+| Command | What it checks |
+|---|---|
+| `make test` | 95 unit tests: webhook (Go, race detector on), CLI (Go), chaos engine (Python) |
+| `make lint` | golangci-lint, ruff, shellcheck and actionlint, the same versions CI uses |
+| `make verify` | Generates a Go, Python and Node service and checks that its tests pass, its image builds and serves `/health`, `/ready` and `/metrics` as non-root on a read-only filesystem, its SLO alert rules pass `promtool`, and its overlays render (37 checks) |
+| `make smoke` | Starts the Compose stack and sends a synthetic alert through it: auth, incident creation, dedup, pages, portal (15 checks) |
+| `make e2e` | Chaos kills pods in a throwaway k3s cluster; follows the alert to a single incident and a report (10 checks) |
+| `make gitops-demo` | Argo CD syncs a generated service from a local Git server; see "GitOps with Argo CD" |
+
+The GitHub Actions workflow [.github/workflows/ci.yml](.github/workflows/ci.yml) runs lint, a gitleaks secret scan, the unit tests, an image build, the three scripts above, and uploads container logs when a check fails. The end-to-end chaos run is heavier, so it runs on pushes to `main` and on demand rather than on every pull request.
+
+> **Status:** I ran every script and linter locally and checked the workflow file with `actionlint`, but the workflow itself has not run on GitHub yet. The badge at the top shows "no status" until it does; the first run is the real test.
+
 ---
 
 # Roadmap / Task list
@@ -278,12 +309,12 @@ All tools listed are **free and open source**. Tick items off as they are comple
 
 ## Phase 9 — Quality, CI, and CV polish
 
-- [ ] GitHub Actions for this repo: lint (`golangci-lint`, `ruff`), unit tests, Docker build, compose smoke test
-- [ ] End-to-end test in CI using kind: deploy sample app → kill pod → assert alert fires
-- [ ] Badges (build, license) at the top of this README
-- [ ] Demo video / GIF and screenshots of Slack RCA and Grafana
-- [ ] "What I learned / design decisions" section for interviews
-- [ ] Short CV bullet points (see below)
+- [x] GitHub Actions for this repo: lint (`golangci-lint`, `ruff`), unit tests, Docker build, compose smoke test (workflow checked with `actionlint` and every step run locally; not yet run on GitHub)
+- [x] End-to-end test in CI: deploy sample app → kill pod → assert alert fires (`scripts/e2e-chaos.sh`; uses the k3s cluster the project already ships instead of kind, and goes on to check the incident and report)
+- [x] Badges (build, license) at the top of this README (the build badge shows "no status" until CI runs on GitHub)
+- [ ] Demo video / GIF and screenshots of Slack RCA and Grafana (not done: it needs a screen recorder and your Slack; [docs/demo-script.md](docs/demo-script.md) is the shot-by-shot script)
+- [x] "What I learned / design decisions" section for interviews ([docs/design-decisions.md](docs/design-decisions.md))
+- [x] Short CV bullet points (see below)
 
 ---
 
@@ -302,9 +333,14 @@ All tools listed are **free and open source**. Tick items off as they are comple
 | Vector store (optional) | Chroma or Qdrant |
 | Chat notifications | Slack incoming webhooks (free plan) |
 
-## CV bullet ideas (update as features land)
+## CV bullet points
 
-- Built an internal developer platform in Go that scaffolds production-ready microservices (Dockerfile, Kubernetes manifests, CI/CD) and pushes to GitHub in seconds.
-- Developed a Python chaos-engineering engine that injects pod failures into Kubernetes to validate self-healing and measure MTTR.
-- Implemented an AI-assisted incident pipeline (Prometheus → Alertmanager → Go webhook → local Llama 3) that posts root-cause analyses to Slack.
-- Containerised the entire platform with Docker Compose so it runs end-to-end with a single command using only free, open-source tooling.
+Pick the three or four that fit the role. Every claim below is something the repository demonstrates.
+
+- Built an internal developer platform (Go, Python, Docker, Kubernetes) in which one CLI command generates a Go, Python or Node service with health checks, Prometheus metrics, tests, hardened Kustomize manifests, SLO burn-rate alerts, a Grafana dashboard, Argo CD applications and a CI pipeline with secret and vulnerability scanning.
+- Wrote a chaos-engineering engine (pod kill, CPU and memory stress, node drain) with blast-radius limits, a kill switch and dry-run mode that measures recovery time (MTTR) per experiment and exports it to Prometheus, Grafana and a generated report.
+- Designed an incident pipeline in Go: Alertmanager alerts are grouped and deduplicated into one incident, enriched with Kubernetes events, logs, Prometheus stats and runbook search (Qdrant), and explained by a local Llama 3 model, with retries and a fallback when the model is down.
+- Added safe auto-remediation: rules read structured pod status (never LLM text) and propose a rollback or a GitHub pull request, a named person approves in Slack or the API, and every step is written to an append-only audit log enforced by database triggers.
+- Proved the GitOps loop on a real cluster (k3s, Argo CD, Gitea): generated manifests sync, a Git commit rolls out, and manual drift is reverted.
+- Tested at several levels: 95 unit tests (Go with the race detector, Python), 62 integration checks across three scripts (generated services in three languages, a Compose smoke test, a chaos end-to-end run), `promtool` tests for alert rules, and a GitHub Actions pipeline with linting and secret scanning.
+- Containerised everything with Docker Compose so it runs with one command using only free, open-source tools.

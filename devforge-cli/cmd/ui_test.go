@@ -117,7 +117,9 @@ func TestPortalEmptyCatalogAndAPI(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Errorf("healthz = %d", resp.StatusCode)
 	}
-	if resp, _ = http.Get(srv.URL + "/nope"); resp.StatusCode != 404 {
+	resp, _ = http.Get(srv.URL + "/nope")
+	resp.Body.Close()
+	if resp.StatusCode != 404 {
 		t.Errorf("unknown path = %d, want 404", resp.StatusCode)
 	}
 }

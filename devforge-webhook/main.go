@@ -30,6 +30,14 @@ func requireToken(token string, next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// writeJSON encodes v as the response body. A failure here means the client went away mid-reply, so
+// it is logged rather than returned.
+func writeJSON(w http.ResponseWriter, v any) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Warn("could not write response", "error", err.Error())
+	}
+}
+
 func (a *App) alertHandler(w http.ResponseWriter, r *http.Request) {
 	var payload AlertPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -38,7 +46,7 @@ func (a *App) alertHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	result := a.handleGroup(payload)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"result": result})
+	writeJSON(w, map[string]string{"result": result})
 }
 
 func (a *App) mux() *http.ServeMux {
@@ -81,10 +89,10 @@ func (a *App) actionDecision(approve bool) http.HandlerFunc {
 				code = http.StatusForbidden
 			}
 			w.WriteHeader(code)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			writeJSON(w, map[string]string{"error": err.Error()})
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]string{"message": msg})
+		writeJSON(w, map[string]string{"message": msg})
 	}
 }
 

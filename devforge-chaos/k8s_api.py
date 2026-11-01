@@ -52,4 +52,7 @@ class K8s:
         self.core.patch_node(node, {"spec": {"unschedulable": cordoned}, "metadata": {"annotations": annotations}})
 
     def nodes_cordoned_by_chaos(self):
-        return [n.metadata.name for n in self.list_nodes() if (n.metadata.annotations or {}).get(CORDON_ANNOTATION) == "true"]
+        return [
+            n.metadata.name for n in self.list_nodes()
+            if (n.metadata.annotations or {}).get(CORDON_ANNOTATION) == "true"
+        ]

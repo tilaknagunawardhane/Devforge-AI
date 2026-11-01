@@ -130,7 +130,7 @@ def main():
         cfg = load_config()
     except ConfigError as e:
         log.error("invalid configuration: %s", e)
-        raise SystemExit(2)
+        raise SystemExit(2) from e
 
     from k8s_api import K8s
 
@@ -140,8 +140,10 @@ def main():
 
     metrics.DRY_RUN.set(1 if cfg.dry_run else 0)
     start_http_server(cfg.metrics_port)
-    log.info("DevForge Chaos Engine started: namespace=%s selector=%r experiments=%s interval=%ss dry_run=%s kill_switch=%s",
-             cfg.namespace, cfg.selector, ",".join(cfg.experiments), cfg.interval, cfg.dry_run, cfg.kill_switch_file)
+    log.info(
+        "DevForge Chaos Engine started: namespace=%s selector=%r experiments=%s interval=%ss dry_run=%s kill_switch=%s",
+        cfg.namespace, cfg.selector, ",".join(cfg.experiments), cfg.interval, cfg.dry_run, cfg.kill_switch_file,
+    )
     ctl.run_forever()
 
 

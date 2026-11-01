@@ -89,7 +89,9 @@ func (a *App) openMemoryPR(ctx context.Context, act *Action) (string, error) {
 	var params struct {
 		Factor int `json:"factor"`
 	}
-	json.Unmarshal([]byte(act.Params), &params)
+	if err := json.Unmarshal([]byte(act.Params), &params); err != nil {
+		return "", fmt.Errorf("action #%d has unreadable parameters: %w", act.ID, err)
+	}
 	if params.Factor < 2 {
 		params.Factor = 2
 	}

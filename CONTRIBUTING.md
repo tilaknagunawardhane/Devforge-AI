@@ -13,5 +13,6 @@ Thanks for your interest! This project uses only free and open-source tools, and
 
 1. Fork and create a branch: `git checkout -b feat/my-change`
 2. Make your change, with tests where practical.
-3. Update the roadmap in `README.md` if you complete a task.
-4. Open a pull request describing what changed and how you verified it.
+3. Run `make test` and `make lint` (Docker is the only prerequisite). `make verify`, `make smoke` and `make e2e` run the heavier integration checks that CI also runs.
+4. Update the roadmap in `README.md` if you complete a task.
+5. Open a pull request describing what changed and how you verified it.

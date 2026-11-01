@@ -65,10 +65,15 @@ def render_markdown(records):
             stats = "- | - | -"
         lines.append(f"| {name} | {len(runs)} | {len(times)} | {stats} | {bad} |")
 
-    lines += ["", "## Timeline", "", "| Time (UTC) | Experiment | Targets | Result | Recovery (s) | Detail |", "|---|---|---|---|---|---|"]
+    lines += [
+        "", "## Timeline", "",
+        "| Time (UTC) | Experiment | Targets | Result | Recovery (s) | Detail |",
+        "|---|---|---|---|---|---|",
+    ]
     for r in reversed(records):
         rec = "-" if r.recovery_seconds is None else f"{r.recovery_seconds:.1f}"
-        lines.append(f"| {r.started_at} | {r.experiment} | {', '.join(r.targets) or '-'} | {r.result} | {rec} | {r.detail} |")
+        targets = ", ".join(r.targets) or "-"
+        lines.append(f"| {r.started_at} | {r.experiment} | {targets} | {r.result} | {rec} | {r.detail} |")
     return "\n".join(lines + [""])
 
 

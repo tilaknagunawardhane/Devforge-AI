@@ -1,0 +1,22 @@
+# golangci-lint v1 configuration, shared by devforge-cli and devforge-webhook.
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck      # unchecked errors
+    - govet
+    - staticcheck
+    - gosimple
+    - unused
+    - ineffassign
+    - gofmt
+    - misspell
+    - bodyclose     # HTTP response bodies must be closed
+
+issues:
+  exclude-rules:
+    # Tests may ignore errors from helpers like Write/Encode on httptest responses.
+    - path: _test\.go
+      linters:
+        - errcheck

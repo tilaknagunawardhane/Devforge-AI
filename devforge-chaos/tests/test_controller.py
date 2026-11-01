@@ -1,12 +1,11 @@
 import random
 
-import pytest
+from conftest import FakeClock, FakeK8s, make_pod
 
 import metrics
 import report
 from chaos import Controller
 from config import Config
-from conftest import FakeClock, FakeK8s, make_pod
 from recovery import wait_for_recovery
 
 

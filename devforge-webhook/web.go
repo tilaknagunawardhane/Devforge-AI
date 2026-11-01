@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -40,6 +39,12 @@ var pageTemplates = template.Must(template.New("pages").Parse(`
 <h2>Audit trail</h2>{{template "audit" .Audit}}{{end}}
 `))
 
+func render(w http.ResponseWriter, name string, data any) {
+	if err := pageTemplates.ExecuteTemplate(w, name, data); err != nil {
+		slog.Warn("could not render page", "page", name, "error", err.Error())
+	}
+}
+
 func (a *App) incidentsPage(w http.ResponseWriter, r *http.Request) {
 	list, err := a.store.List(50)
 	if err != nil {
@@ -48,7 +53,7 @@ func (a *App) incidentsPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	pageTemplates.ExecuteTemplate(w, "list", list)
+	render(w, "list", list)
 }
 
 func (a *App) incidentPage(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +70,7 @@ func (a *App) incidentPage(w http.ResponseWriter, r *http.Request) {
 	actions, _ := a.store.ActionsForIncident(id)
 	trail, _ := a.store.ListAudit(100, id)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	pageTemplates.ExecuteTemplate(w, "detail", map[string]any{"I": inc, "Actions": actions, "Audit": trail})
+	render(w, "detail", map[string]any{"I": inc, "Actions": actions, "Audit": trail})
 }
 
 func (a *App) auditPage(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +80,7 @@ func (a *App) auditPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	pageTemplates.ExecuteTemplate(w, "auditpage", trail)
+	render(w, "auditpage", trail)
 }
 
 type incidentJSON struct {
@@ -110,5 +115,5 @@ func (a *App) incidentsJSON(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: i.CreatedAt.Format("2006-01-02T15:04:05Z"), URL: a.cfg.PublicURL + "/incidents/" + strconv.FormatInt(i.ID, 10)})
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	writeJSON(w, out)
 }

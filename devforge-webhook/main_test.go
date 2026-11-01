@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -185,18 +184,14 @@ func TestIncidentPagesEscapeContent(t *testing.T) {
 			t.Errorf("%s: status %d, unescaped content in page", path, resp.StatusCode)
 		}
 	}
-	if resp, _ := http.Get(srv.URL + "/incidents/999"); resp.StatusCode != 404 {
-		t.Errorf("missing incident: got %d, want 404", resp.StatusCode)
+	for path, name := range map[string]string{"/incidents/999": "missing incident", "/incidents/abc": "bad id"} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 404 {
+			t.Errorf("%s: got %d, want 404", name, resp.StatusCode)
+		}
 	}
-	if resp, _ := http.Get(srv.URL + "/incidents/abc"); resp.StatusCode != 404 {
-		t.Errorf("bad id: got %d, want 404", resp.StatusCode)
-	}
-}
-
-func decodeResult(t *testing.T, resp *http.Response) string {
-	t.Helper()
-	defer resp.Body.Close()
-	var out map[string]string
-	json.NewDecoder(resp.Body).Decode(&out)
-	return out["result"]
 }

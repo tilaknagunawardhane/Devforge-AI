@@ -4,10 +4,12 @@
 clock(). Every fault is removed in a `finally` block so a crash or kill switch never leaves
 a cordoned node or a running stress process behind.
 """
-import time
+import logging
 from dataclasses import dataclass, field
 
 from targets import eligible_pods
+
+log = logging.getLogger("chaos")
 
 
 class ExperimentError(Exception):
@@ -51,9 +53,10 @@ def cpu_stress(api, cfg, ctl, targets):
         for p in started:
             try:
                 _exec_ok(api, p, "killall timeout 2>/dev/null")
-            except Exception:
-                pass
-    return Outcome(_names(targets), ctl.clock(), f"{cfg.cpu_workers} busy loop(s) for {cfg.duration}s", injected=targets)
+            except Exception as e:  # the loops stop by themselves after `duration`, but say so if cleanup failed
+                log.warning("could not stop the CPU stress in %s: %s", p.metadata.name, e)
+    detail = f"{cfg.cpu_workers} busy loop(s) for {cfg.duration}s"
+    return Outcome(_names(targets), ctl.clock(), detail, injected=targets)
 
 
 def memory_stress(api, cfg, ctl, targets):
@@ -69,8 +72,8 @@ def memory_stress(api, cfg, ctl, targets):
         for p in started:
             try:
                 _exec_ok(api, p, f"rm -f {path}")
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("could not remove %s from %s (memory stays allocated): %s", path, p.metadata.name, e)
     return Outcome(_names(targets), ctl.clock(), f"{cfg.memory_mb}MiB held for {cfg.duration}s", injected=targets)
 
 
@@ -101,8 +104,9 @@ def node_drain(api, cfg, ctl, targets):
         for n in cordoned:
             try:
                 api.set_cordon(n, False)
-            except Exception:
-                pass
+            except Exception as e:
+                # The node keeps the cordon annotation, so the next start of the engine retries (cleanup_stale).
+                log.error("COULD NOT UNCORDON node %s: %s", n, e)
     # The outage counts from the moment of eviction, not from the uncordon.
     return Outcome(_names(evicted), start, f"drained {', '.join(nodes)} for {cfg.duration}s", injected=evicted)
 

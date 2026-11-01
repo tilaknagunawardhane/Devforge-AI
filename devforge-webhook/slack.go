@@ -144,7 +144,7 @@ type slackInteraction struct {
 
 func slackReply(w http.ResponseWriter, text string) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"response_type": "in_channel", "replace_original": false, "text": text})
+	writeJSON(w, map[string]any{"response_type": "in_channel", "replace_original": false, "text": text})
 }
 
 // slackActions handles button clicks. It is authenticated by Slack's signature, not the bearer token.

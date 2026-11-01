@@ -1,0 +1,153 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: false
+
+      - name: golangci-lint (devforge-cli)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.8
+          working-directory: devforge-cli
+
+      - name: golangci-lint (devforge-webhook)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.8
+          working-directory: devforge-webhook
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: ruff (devforge-chaos)
+        run: |
+          pip install ruff==0.8.4
+          ruff check devforge-chaos
+
+      - name: shellcheck (scripts)
+        run: shellcheck --severity=warning scripts/*.sh gitops/demo.sh
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # gitleaks from its public image: free for every account type
+      - run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.21.2 detect --source /repo --no-banner --redact
+
+  test-go:
+    name: Test ${{ matrix.dir }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [devforge-cli, devforge-webhook]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: ${{ matrix.dir }}/go.sum
+      - name: vet and test (race detector on)
+        working-directory: ${{ matrix.dir }}
+        run: |
+          go vet ./...
+          go test -race -count=1 ./...
+
+  test-chaos:
+    name: Test devforge-chaos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: devforge-chaos/requirements*.txt
+      - working-directory: devforge-chaos
+        run: |
+          pip install -r requirements-dev.txt
+          pytest -q
+
+  docker-build:
+    name: Build images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build every image in docker-compose.yml
+        run: docker compose --profile k8s --profile gitops build
+
+  generated-services:
+    name: Generated services work
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate go, python and node services; test, build, probe, promtool, kustomize
+        run: bash scripts/verify-generated.sh
+
+  compose-smoke:
+    name: Compose smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bring the stack up and send a synthetic alert through it
+        run: bash scripts/smoke.sh
+      - name: Keep the logs if it failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs
+          path: test-logs.txt
+          if-no-files-found: ignore
+
+  e2e-chaos:
+    name: End-to-end chaos loop (k3s)
+    # Heavy (starts a cluster), so it runs on pushes to main and on demand, not on every pull request.
+    if: github.event_name != 'pull_request'
+    needs: [test-go, test-chaos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kill pods in a throwaway cluster and follow the alert to an incident
+        run: bash scripts/e2e-chaos.sh
+      - name: Keep the logs if it failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: test-logs.txt
+          if-no-files-found: ignore
+      - name: Keep the chaos report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-report
+          path: reports/chaos-report.md
+          if-no-files-found: ignore

@@ -186,7 +186,9 @@ func portalHandler(cfg PortalConfig) http.Handler {
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		portalTemplate.Execute(w, buildPortalData(ctx, cfg))
+		if err := portalTemplate.Execute(w, buildPortalData(ctx, cfg)); err != nil {
+			fmt.Fprintln(os.Stderr, "portal: render failed:", err)
+		}
 	})
 	mux.HandleFunc("GET /api/services", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
@@ -196,7 +198,9 @@ func portalHandler(cfg PortalConfig) http.Handler {
 			d.Services = []ServiceView{}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(d.Services)
+		if err := json.NewEncoder(w).Encode(d.Services); err != nil {
+			fmt.Fprintln(os.Stderr, "portal: write failed:", err)
+		}
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	return mux

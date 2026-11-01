@@ -54,8 +54,8 @@ def load_config(env=None):
             return default
         try:
             return int(raw)
-        except ValueError:
-            raise ConfigError(f"{key} must be a whole number, got {raw!r}")
+        except ValueError as e:
+            raise ConfigError(f"{key} must be a whole number, got {raw!r}") from e
 
     cfg = Config(
         namespace=env.get("TARGET_NAMESPACE", "default"),

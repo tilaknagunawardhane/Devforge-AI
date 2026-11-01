@@ -260,23 +260,33 @@ func (a *App) decide(ctx context.Context, id int64, actor string, approve bool) 
 
 	if a.cfg.RemediationDryRun {
 		msg := "dry-run: would " + describe(act)
-		a.store.FinishAction(id, ActionExecuted, msg)
+		a.finish(act, ActionExecuted, msg)
 		a.audit(actor, auditDryRun, act.IncidentID, id, msg)
 		return fmt.Sprintf("Action #%d approved by %s (%s).", id, actor, msg), nil
 	}
 
 	result, err := a.execute(ctx, cs, act)
 	if err != nil {
-		a.store.FinishAction(id, ActionFailed, err.Error())
+		a.finish(act, ActionFailed, err.Error())
 		a.audit(actor, auditFailed, act.IncidentID, id, err.Error())
 		return "", fmt.Errorf("action #%d failed: %w", id, err)
 	}
-	a.store.FinishAction(id, ActionExecuted, result)
+	a.finish(act, ActionExecuted, result)
 	a.audit(actor, auditExecuted, act.IncidentID, id, result)
 	if act.Kind == KindRestart || act.Kind == KindRollback {
 		go a.verifyRollout(act.IncidentID, id, act.Namespace, act.Target)
 	}
 	return fmt.Sprintf("Action #%d approved by %s: %s.", id, actor, result), nil
+}
+
+// finish records how an action ended. By this point the change has usually already happened, so a
+// failed database write is reported loudly (log and audit entry) instead of silently leaving the
+// action stuck in "approved".
+func (a *App) finish(act *Action, status, result string) {
+	if err := a.store.FinishAction(act.ID, status, result); err != nil {
+		slog.Error("COULD NOT RECORD ACTION OUTCOME", "action", act.ID, "status", status, "error", err.Error())
+		a.audit(ActorSystem, auditFailed, act.IncidentID, act.ID, "outcome ("+status+") could not be saved: "+err.Error())
+	}
 }
 
 func describe(act *Action) string {
