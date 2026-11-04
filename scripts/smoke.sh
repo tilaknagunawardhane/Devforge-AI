@@ -19,6 +19,7 @@ dc down -v >/dev/null 2>&1 || true
 step "Start the stack (models: $OLLAMA_MODEL + $EMBED_MODEL)"
 up_log="$(mktemp)"
 if ! dc up -d --build > "$up_log" 2>&1; then
+  dc ps -a >&2   # which service stopped?
   tail -40 "$up_log" >&2
   fail "docker compose up failed (output above)"
 fi

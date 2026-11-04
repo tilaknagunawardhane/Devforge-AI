@@ -23,6 +23,7 @@ rm -f reports/results.jsonl reports/chaos-report.md
 step "Start the stack with a cluster, a demo app and the chaos engine"
 up_log="$(mktemp)"
 if ! dcp up -d --build > "$up_log" 2>&1; then
+  dcp ps -a >&2   # which service stopped?
   tail -40 "$up_log" >&2
   fail "docker compose up failed (output above)"
 fi

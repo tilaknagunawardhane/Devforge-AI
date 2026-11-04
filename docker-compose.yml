@@ -26,7 +26,19 @@ services:
     environment:
       OLLAMA_HOST: ollama:11434
     # Chat model for RCAs + embedding model for runbook search
-    entrypoint: ["/bin/sh", "-c", "ollama pull ${OLLAMA_MODEL:-llama3} && ollama pull ${EMBED_MODEL:-nomic-embed-text}"]
+    # A download from the public registry can fail for a moment; retry instead of failing the whole stack.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for attempt in 1 2 3 4 5; do
+          if ollama pull ${OLLAMA_MODEL:-llama3} && ollama pull ${EMBED_MODEL:-nomic-embed-text}; then exit 0; fi
+          if [ "$$attempt" -lt 5 ]; then
+            echo "model download failed (attempt $$attempt of 5); retrying in 10 seconds" >&2
+            sleep 10
+          fi
+        done
+        echo "model download failed after 5 attempts" >&2
+        exit 1
     restart: "no"
 
   webhook:
