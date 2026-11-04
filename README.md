@@ -223,7 +223,7 @@ Everything runs in containers, so the only prerequisite is Docker. With `make` i
 
 The GitHub Actions workflow [.github/workflows/ci.yml](.github/workflows/ci.yml) runs lint, a gitleaks secret scan, the unit tests, an image build, the three scripts above, and uploads container logs when a check fails. The end-to-end chaos run is heavier, so it runs on pushes to `main` and on demand rather than on every pull request.
 
-> **Status:** I ran every script and linter locally and checked the workflow file with `actionlint`, but the workflow itself has not run on GitHub yet. The badge at the top shows "no status" until it does; the first run is the real test.
+> **Status:** the first run on GitHub passed 7 of 9 jobs (lint, secret scan, all three unit-test jobs, image build, Compose smoke test). The two that failed were problems in my scripts, not in the platform. "Generated services work" passed all 37 checks and then failed on its own clean-up, because containers create root-owned files that a normal Linux user cannot delete (Windows hides this). `scripts/lib.sh` now deletes them from a container. The scripts also ignored a failed `docker compose up` and waited five minutes instead of stopping; they now fail at once and print the build output. Both fixes pass on Linux as a normal user (WSL Ubuntu), but the workflow has not been re-run on GitHub since. For the end-to-end job I could not reproduce the exact failure, so if it fails again, open the run and download the `e2e-logs` artifact.
 
 ---
 
@@ -311,7 +311,7 @@ All tools listed are **free and open source**. Tick items off as they are comple
 
 ## Phase 9 — Quality, CI, and CV polish
 
-- [x] GitHub Actions for this repo: lint (`golangci-lint`, `ruff`), unit tests, Docker build, compose smoke test (workflow checked with `actionlint` and every step run locally; not yet run on GitHub)
+- [x] GitHub Actions for this repo: lint (`golangci-lint`, `ruff`), unit tests, Docker build, compose smoke test (first GitHub run: 7 of 9 jobs passed; the other two were script problems, now fixed and checked on Linux, awaiting a re-run)
 - [x] End-to-end test in CI: deploy sample app → kill pod → assert alert fires (`scripts/e2e-chaos.sh`; uses the k3s cluster the project already ships instead of kind, and goes on to check the incident and report)
 - [x] Badges (build, license) at the top of this README (the build badge shows "no status" until CI runs on GitHub)
 - [ ] Demo video / GIF and screenshots of Slack RCA and Grafana (not done: it needs a screen recorder and your Slack; [docs/demo-script.md](docs/demo-script.md) is the shot-by-shot script)

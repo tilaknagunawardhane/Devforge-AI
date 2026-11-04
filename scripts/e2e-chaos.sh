@@ -21,7 +21,12 @@ dcp down -v >/dev/null 2>&1 || true
 rm -f reports/results.jsonl reports/chaos-report.md
 
 step "Start the stack with a cluster, a demo app and the chaos engine"
-dcp up -d --build 2>&1 | grep -iE "error|failed" && fail "docker compose up reported an error" || true
+up_log="$(mktemp)"
+if ! dcp up -d --build > "$up_log" 2>&1; then
+  tail -40 "$up_log" >&2
+  fail "docker compose up failed (output above)"
+fi
+pass "stack started"
 wait_for "demo app has 3 ready replicas" 100 sh -c "[ \"\$(docker compose --profile k8s exec -T k3s kubectl get deploy demo-app -o jsonpath='{.status.readyReplicas}')\" = '3' ]"
 
 step "Chaos kills pods and the cluster heals"

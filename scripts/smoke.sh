@@ -17,7 +17,12 @@ trap cleanup EXIT
 dc down -v >/dev/null 2>&1 || true
 
 step "Start the stack (models: $OLLAMA_MODEL + $EMBED_MODEL)"
-dc up -d --build 2>&1 | grep -iE "error|failed" && fail "docker compose up reported an error" || true
+up_log="$(mktemp)"
+if ! dc up -d --build > "$up_log" 2>&1; then
+  tail -40 "$up_log" >&2
+  fail "docker compose up failed (output above)"
+fi
+pass "stack started"
 
 step "Services answer"
 wait_for "webhook healthy" 120 inside webhook http://localhost:9090/healthz
