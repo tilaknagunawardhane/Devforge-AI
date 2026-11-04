@@ -165,9 +165,16 @@ docker compose --profile k8s down -v     # stop and delete data (incidents, down
 ### If something goes wrong
 - **Nothing happens for a long time at first start:** the AI models are downloading; check
   `docker compose logs ollama-pull`.
-- **`localhost` addresses do not open (this happened on the author's Windows machine):** Docker Desktop
-  is not publishing ports. Restart Docker Desktop, or reach services from inside Docker, for example
-  `docker compose exec webhook wget -qO- http://localhost:9090/incidents`.
+- **A page loads forever and never shows (Windows with WSL2; this happened to the author):** WSL's own
+  port forwarder (`wslrelay`) grabs `localhost` ports that Docker publishes on *all* interfaces and then
+  does not pass the request on. The compose file avoids this by publishing every port on `127.0.0.1`
+  only, so if you changed a `ports:` entry back to `"9090:9090"`, put `127.0.0.1:` in front again. To
+  check: `Get-NetTCPConnection -LocalPort 8088 -State Listen` should show `com.docker.backend`, not
+  `wslrelay`, on `127.0.0.1`. Opening `http://127.0.0.1:8088` instead of `localhost` is also a little
+  faster, because the browser skips an IPv6 attempt that times out first.
+- **The pages say "can't be reached" and `docker compose ps` shows services as `Created`:** one service they
+  depend on failed to start. Run `docker compose logs ollama-pull`. The most common cause is a typo in the
+  model name in `.env` (for example `OLLAMA_MODEL=OLLAMA_MODEL=qwen2.5:0.5b`, with the name written twice).
 - **Port already in use:** another program uses 9090, 3000 or 8088; stop it or change the port in
   `docker-compose.yml`.
 - **The analysis says "AI analysis unavailable":** Ollama was not ready or the model was missing. The
@@ -281,7 +288,8 @@ secrets (gitleaks) and vulnerabilities (Trivy), builds, pushes and updates the m
 | `scripts/` | Test scripts that CI also runs (`test`, `lint`, `verify-generated`, `smoke`, `e2e-chaos`). |
 | `gitops/demo.sh` | The Argo CD demo (needs only Docker). |
 | `docs/` | `design-decisions.md` (why and what I learned), `demo-script.md`, and this guide. |
-| `examples/` | Samples from the very first version. Old layout, kept for history; not used. |
+| `examples/k8s/` | **Used.** `demo-app.yaml` is the 3-copy nginx app that the practice cluster runs and the chaos engine attacks. Do not delete. |
+| `examples/billing-service/`, `examples/notification-api/` | Samples from the very first version (old layout). Nothing uses them; safe to delete. |
 | `reports/` | Chaos reports are written here (ignored by Git). |
 
 ---

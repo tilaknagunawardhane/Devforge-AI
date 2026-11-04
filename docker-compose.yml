@@ -9,7 +9,7 @@ services:
   ollama:
     image: ollama/ollama:latest
     ports:
-      - "11435:11434"
+      - "127.0.0.1:11435:11434"
     volumes:
       - ollama-data:/root/.ollama
     healthcheck:
@@ -60,7 +60,7 @@ services:
       - webhook-data:/data
       - ./runbooks:/runbooks:ro
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     depends_on:
       ollama-pull:
         condition: service_completed_successfully
@@ -87,7 +87,7 @@ services:
     volumes:
       - ./.devforge:/data:ro
     ports:
-      - "8088:8088"
+      - "127.0.0.1:8088:8088"
     depends_on:
       - webhook
 
@@ -103,7 +103,7 @@ services:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
     ports:
-      - "9091:9090"
+      - "127.0.0.1:9091:9090"
     depends_on:
       - alertmanager
 
@@ -113,7 +113,7 @@ services:
       - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - ./monitoring/webhook-token:/etc/alertmanager/webhook-token:ro
     ports:
-      - "9093:9093"
+      - "127.0.0.1:9093:9093"
     depends_on:
       - webhook
 
@@ -126,7 +126,7 @@ services:
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - prometheus
 
@@ -143,7 +143,7 @@ services:
     volumes:
       - gitea-data:/data
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
 
   # ---------- profile "k8s": a throwaway Kubernetes cluster to attack ----------
   k3s:
