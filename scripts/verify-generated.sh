@@ -11,10 +11,11 @@ KUBECTL_IMAGE="rancher/k3s:v1.30.5-k3s1"   # contains kubectl (for `kubectl kust
 PROM_IMAGE="prom/prometheus:v2.54.1"        # contains promtool
 cleanup() {
   docker rm -f verify-svc-run >/dev/null 2>&1 || true
-  rm -rf "$WORK"
+  wipe_dir "$WORK"
 }
 trap cleanup EXIT
-rm -rf "$WORK" && mkdir -p "$WORK"
+wipe_dir "$WORK"
+mkdir -p "$WORK"
 
 step "Build the CLI image"
 docker build -q -t "$CLI_IMAGE" ./devforge-cli >/dev/null

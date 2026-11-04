@@ -40,4 +40,13 @@ dc() { docker compose "$@"; }
 inside() { local svc="$1"; shift; dc exec -T "$svc" wget -qO- "$@"; }
 contains() { grep -q -- "$1"; }
 
+# Delete a folder that containers wrote into. Containers run as root, and on Linux (CI) a normal user
+# cannot delete root-owned files, so the delete is done from a container too. Never fails the caller:
+# a clean-up problem must not turn a passing run into a failing one.
+wipe_dir() {
+  [ -e "$1" ] || return 0
+  docker run --rm -v "$1:/wipe" python:3.12-slim sh -c 'rm -rf /wipe/* /wipe/.[!.]* /wipe/..?*' >/dev/null 2>&1 || true
+  rm -rf "$1" 2>/dev/null || true
+}
+
 summary() { printf '\n\033[1m%d checks passed\033[0m\n' "$PASSED"; }
