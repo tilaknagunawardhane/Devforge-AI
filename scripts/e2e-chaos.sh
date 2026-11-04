@@ -37,7 +37,7 @@ dcp logs chaos 2>&1 | grep -E 'recovery=' | grep -q 'recovery=' && pass "recover
 
 step "Monitoring and incident"
 wait_for "Prometheus alert ChaosFaultInjected is firing" 60 sh -c "docker compose --profile k8s exec -T prometheus wget -qO- http://localhost:9090/api/v1/alerts | grep -q '\"state\":\"firing\"'"
-check "recovery time is exported to Prometheus" sh -c "docker compose --profile k8s exec -T prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=chaos_last_recovery_seconds' | grep -q pod-kill"
+wait_for "recovery time is exported to Prometheus" 40 sh -c "docker compose --profile k8s exec -T prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=chaos_last_recovery_seconds' | grep -q pod-kill"
 wait_for "webhook opened an incident for demo-app" 60 sh -c "docker compose --profile k8s exec -T webhook wget -qO- http://localhost:9090/api/incidents.json | grep -q demo-app"
 feed="$(dcp exec -T webhook wget -qO- http://localhost:9090/api/incidents.json)"
 echo "$feed" | grep -q '"pendingActions":0' && pass "no remediation was proposed for a deliberate chaos fault" || fail "chaos faults must not produce proposals"

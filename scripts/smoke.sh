@@ -27,12 +27,12 @@ pass "stack started"
 
 step "Services answer"
 wait_for "webhook healthy" 120 inside webhook http://localhost:9090/healthz
-check "Prometheus ready" inside prometheus http://localhost:9090/-/ready
-check "Alertmanager ready" inside alertmanager http://localhost:9093/-/ready
+wait_for "Prometheus ready" 40 inside prometheus http://localhost:9090/-/ready
+wait_for "Alertmanager ready" 40 inside alertmanager http://localhost:9093/-/ready
 wait_for "Grafana healthy" 40 sh -c "docker compose exec -T grafana wget -qO- http://localhost:3000/api/health | grep -q ok"
-check "Grafana has the provisioned chaos dashboard" sh -c "docker compose exec -T grafana wget -qO- 'http://admin:admin@localhost:3000/api/search?query=Chaos' | grep -q devforge-chaos"
-check "portal healthy" inside portal http://localhost:8088/healthz
-check "Prometheus loaded the chaos alert rules" sh -c "docker compose exec -T prometheus wget -qO- http://localhost:9090/api/v1/rules | grep -q ChaosFaultInjected"
+wait_for "Grafana has the provisioned chaos dashboard" 40 sh -c "docker compose exec -T grafana wget -qO- 'http://admin:admin@localhost:3000/api/search?query=Chaos' | grep -q devforge-chaos"
+wait_for "portal healthy" 40 inside portal http://localhost:8088/healthz
+wait_for "Prometheus loaded the chaos alert rules" 40 sh -c "docker compose exec -T prometheus wget -qO- http://localhost:9090/api/v1/rules | grep -q ChaosFaultInjected"
 wait_for "runbooks indexed into Qdrant" 60 sh -c "docker compose logs webhook 2>&1 | grep -q 'runbooks indexed'"
 
 step "Alert path"
