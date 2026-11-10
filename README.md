@@ -13,6 +13,10 @@ An internal developer platform that **builds** services in seconds and **heals**
 
 **New here?** Start with the [project guide](docs/project-guide.md): what everything is, how to run it, and what every file does. **Why it is built this way** is in [docs/design-decisions.md](docs/design-decisions.md): the choices, the bugs that taught me something, and what I would do next.
 
+![Architecture of DevForge](docs/architecture.svg)
+
+The same picture as an editable diagram:
+
 ```mermaid
 flowchart LR
     CLI[devforge-cli] -->|service, manifests, CI| GIT[Git repos]

@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" font-family="Segoe UI, Arial, sans-serif">
+<defs>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<style>
+.t{font-size:15px;fill:#0f172a;text-anchor:middle;font-weight:600}
+.s{font-size:12px;fill:#475569;text-anchor:middle}
+.h{font-size:18px;font-weight:700;fill:#0f172a}
+.l{font-size:12px;fill:#334155;text-anchor:middle}
+.e{stroke:#475569;stroke-width:2;fill:none;marker-end:url(#a)}
+</style>
+</defs>
+<rect width="1200" height="640" fill="#f8fafc"/>
+<text x="600" y="38" class="h" text-anchor="middle" style="text-anchor:middle;font-size:24px">DevForge: build services, then heal them</text>
+
+<rect x="30" y="70" width="330" height="270" rx="12" fill="#e0f2fe" stroke="#0284c7"/>
+<text x="195" y="98" class="h" style="text-anchor:middle">Day 1: Builder</text>
+<rect x="60" y="120" width="270" height="56" rx="8" fill="#fff" stroke="#0284c7"/><text x="195" y="144" class="t">devforge-cli (Go)</text><text x="195" y="162" class="s">scaffolds Go / Python / Node</text>
+<rect x="60" y="205" width="270" height="56" rx="8" fill="#fff" stroke="#0284c7"/><text x="195" y="229" class="t">Git repo</text><text x="195" y="247" class="s">code, Kustomize, CI, SLO alerts</text>
+<rect x="60" y="280" width="270" height="44" rx="8" fill="#fff" stroke="#0284c7"/><text x="195" y="308" class="t">Argo CD (GitOps sync)</text>
+<path class="e" d="M195 176V205"/><path class="e" d="M195 261V280"/>
+
+<rect x="30" y="370" width="330" height="240" rx="12" fill="#fee2e2" stroke="#dc2626"/>
+<text x="195" y="398" class="h" style="text-anchor:middle">Reliability</text>
+<rect x="60" y="420" width="270" height="56" rx="8" fill="#fff" stroke="#dc2626"/><text x="195" y="444" class="t">devforge-chaos (Python)</text><text x="195" y="462" class="s">kills pods, measures MTTR</text>
+<rect x="60" y="520" width="270" height="70" rx="8" fill="#fff" stroke="#dc2626"/><text x="195" y="548" class="t">Kubernetes (k3s)</text><text x="195" y="566" class="s">runs the services, self-heals</text>
+<path class="e" d="M195 476V520"/>
+<path class="e" d="M195 280 C 400 330 400 520 330 545" stroke-dasharray="5 4"/>
+<text x="392" y="440" class="l" style="font-weight:600">deploys</text>
+
+<rect x="420" y="70" width="750" height="540" rx="12" fill="#ede9fe" stroke="#7c3aed"/>
+<text x="795" y="98" class="h" style="text-anchor:middle">Day 2: Incident response</text>
+<rect x="450" y="130" width="170" height="56" rx="8" fill="#fff" stroke="#7c3aed"/><text x="535" y="154" class="t">Prometheus</text><text x="535" y="172" class="s">metrics, SLO alerts</text>
+<rect x="670" y="130" width="170" height="56" rx="8" fill="#fff" stroke="#7c3aed"/><text x="755" y="154" class="t">Alertmanager</text><text x="755" y="172" class="s">groups alerts</text>
+<rect x="890" y="130" width="250" height="56" rx="8" fill="#fff" stroke="#7c3aed"/><text x="1015" y="154" class="t">devforge-webhook (Go)</text><text x="1015" y="172" class="s">one incident per group</text>
+<path class="e" d="M620 158H670"/><path class="e" d="M840 158H890"/>
+
+<rect x="450" y="260" width="170" height="56" rx="8" fill="#fff" stroke="#7c3aed"/><text x="535" y="284" class="t">Qdrant</text><text x="535" y="302" class="s">runbook search (RAG)</text>
+<rect x="670" y="260" width="170" height="56" rx="8" fill="#fff" stroke="#7c3aed"/><text x="755" y="284" class="t">Ollama (local LLM)</text><text x="755" y="302" class="s">root-cause analysis</text>
+<rect x="890" y="260" width="250" height="56" rx="8" fill="#fff" stroke="#7c3aed"/><text x="1015" y="284" class="t">Evidence collector</text><text x="1015" y="302" class="s">K8s events, logs, metrics</text>
+<path class="e" d="M1015 186V260"/>
+<path class="e" d="M890 288H840"/><path class="e" d="M670 288H620"/>
+
+<rect x="670" y="400" width="170" height="56" rx="8" fill="#fff" stroke="#16a34a"/><text x="755" y="424" class="t">Slack</text><text x="755" y="442" class="s">RCA + Approve / Reject</text>
+<rect x="450" y="400" width="170" height="56" rx="8" fill="#fff" stroke="#16a34a"/><text x="535" y="424" class="t">Human approves</text><text x="535" y="442" class="s">rules only propose</text>
+<rect x="890" y="400" width="250" height="56" rx="8" fill="#fff" stroke="#7c3aed"/><text x="1015" y="424" class="t">SQLite + audit log</text><text x="1015" y="442" class="s">append-only (triggers)</text>
+<path class="e" d="M755 316V400" stroke-dasharray="0"/>
+<path class="e" d="M670 428H620"/>
+<rect x="670" y="520" width="470" height="56" rx="8" fill="#fff" stroke="#16a34a"/><text x="905" y="544" class="t">Action: rollback, restart or fix pull request</text><text x="905" y="562" class="s">executed only after approval; every step logged</text>
+<path class="e" d="M535 456 C 535 548 600 548 670 548"/>
+<path class="e" d="M1015 316V400"/>
+<path class="e" d="M330 555 C 400 600 560 600 670 560" stroke-dasharray="5 4"/>
+<text x="500" y="600" class="l">faults and failures</text>
+<path class="e" d="M330 548 C 420 500 460 200 450 170" stroke-dasharray="5 4"/>
+</svg>
